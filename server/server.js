@@ -59,6 +59,8 @@ const HOST = '0.0.0.0'; // Listen on all network interfaces
 app.listen(PORT, HOST, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📱 Environment: ${config.NODE_ENV}`);
+  console.log(`📱 Environment: ${config.NODE_ENV}`);
+
   console.log(`🌐 Server accessible at http://0.0.0.0:${PORT}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
 });
