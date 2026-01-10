@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "304498638388",
+    "project_id": "mediping-6e5ab",
+    "storage_bucket": "mediping-6e5ab.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:304498638388:android:14cd41831656a83b8c9461",
+        "android_client_info": {
+          "package_name": "com.mediping.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDaCH02wkYXBZ9C5QqhA4XJq0VsrFkG1-c"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
