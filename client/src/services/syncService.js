@@ -247,6 +247,10 @@ class SyncService {
    */
   async fetchLatestData(token) {
     try {
+      if (!token) {
+        return; // No token, skip sync
+      }
+
       // Ensure database is initialized
       await databaseService.ensureInitialized();
       // Fetch medications from server
@@ -272,7 +276,10 @@ class SyncService {
         }
       }
     } catch (error) {
-      console.error('Error fetching latest data:', error);
+      // Silently handle 401 errors (unauthorized) - user might not be logged in
+      if (error.response?.status !== 401) {
+        console.error('Error fetching latest data:', error);
+      }
     }
   }
 

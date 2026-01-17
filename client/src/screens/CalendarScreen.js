@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { useFocusEffect } from '@react-navigation/native';
 import axios from 'axios';
@@ -72,9 +72,13 @@ const CalendarScreen = ({ navigation }) => {
       // Cache userId to avoid repeated AsyncStorage calls
       setUserId(currentUserId);
 
-      // Load from local database first (offline-first)
-      const localMedications = await databaseService.getMedications(currentUserId);
-      setMedications(localMedications);
+      // Load from local database first (offline-first) - skip on web
+      if (Platform.OS !== 'web') {
+        const localMedications = await databaseService.getMedications(currentUserId);
+        setMedications(localMedications);
+      } else {
+        setMedications([]);
+      }
       setLoading(false);
 
       // Try to sync and fetch latest from server (if online)
@@ -91,23 +95,28 @@ const CalendarScreen = ({ navigation }) => {
           if (response.data.success) {
             const serverMedications = response.data.medications || [];
             
-            // Update local database with server data
-            for (const serverMed of serverMedications) {
-              try {
-                const medToSave = {
-                  ...serverMed,
-                  user_id: currentUserId,
-                };
-                await databaseService.saveMedication(medToSave, false);
-                await databaseService.markMedicationSynced(serverMed.id);
-              } catch (saveError) {
-                console.error('Error saving medication:', saveError);
+            // Update local database with server data (skip on web)
+            if (Platform.OS !== 'web') {
+              for (const serverMed of serverMedications) {
+                try {
+                  const medToSave = {
+                    ...serverMed,
+                    user_id: currentUserId,
+                  };
+                  await databaseService.saveMedication(medToSave, false);
+                  await databaseService.markMedicationSynced(serverMed.id);
+                } catch (saveError) {
+                  console.error('Error saving medication:', saveError);
+                }
               }
+              
+              // Reload from local database
+              const updatedMedications = await databaseService.getMedications(currentUserId);
+              setMedications(updatedMedications);
+            } else {
+              // On web, use server data directly
+              setMedications(serverMedications);
             }
-            
-            // Reload from local database
-            const updatedMedications = await databaseService.getMedications(currentUserId);
-            setMedications(updatedMedications);
           }
         } catch (error) {
           console.log('Using local data - offline or server error');

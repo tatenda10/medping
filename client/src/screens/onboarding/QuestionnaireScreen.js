@@ -10,6 +10,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import firebaseService from '../../services/firebaseService';
+import databaseService from '../../services/databaseService';
 
 const QuestionnaireScreen = ({ navigation }) => {
   const [currentQuestion, setCurrentQuestion] = useState(0);
@@ -121,7 +122,18 @@ const QuestionnaireScreen = ({ navigation }) => {
 
   const saveAnswers = async (newAnswers) => {
     try {
+      // Save to AsyncStorage (for backward compatibility)
       await AsyncStorage.setItem('onboarding_questionnaire', JSON.stringify(newAnswers));
+      
+      // Also save to database for analytics
+      try {
+        await databaseService.ensureInitialized();
+        const userId = 'guest'; // Guest mode during onboarding
+        await databaseService.saveQuestionnaireAnswers(userId, newAnswers);
+      } catch (dbError) {
+        console.warn('Error saving questionnaire to database:', dbError);
+        // Don't block if database save fails
+      }
     } catch (error) {
       console.error('Error saving answers:', error);
     }

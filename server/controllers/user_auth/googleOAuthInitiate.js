@@ -6,8 +6,8 @@ const config = require('../../config/env');
  */
 const initiateGoogleOAuth = async (req, res) => {
   try {
-    const googleClientId = config.GOOGLE_CLIENT_ID;
-    const redirectUri = config.GOOGLE_REDIRECT_URI || `${req.protocol}://${req.get('host')}/oauth/callback`;
+      const googleClientId = config.GOOGLE_CLIENT_ID;
+      const redirectUri = config.GOOGLE_REDIRECT_URI || `${req.protocol}://${req.get('host')}/user-auth/oauth/callback`;
 
     if (!googleClientId) {
       return res.status(500).json({ message: 'Google OAuth not configured' });

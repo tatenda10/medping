@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput, Alert, Modal } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, Alert, Modal, Dimensions, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
@@ -19,6 +19,10 @@ import {
 } from '../utils/medicationUtils';
 import { useAuthCheck } from '../hooks/useAuthCheck';
 import CreateAccountPrompt from '../components/CreateAccountPrompt';
+
+// Detect iPad
+const { width, height } = Dimensions.get('window');
+const isIPad = Platform.OS === 'ios' && (Platform.isPad || (width >= 768 && height >= 768));
 
 const DashboardScreen = () => {
   const navigation = useNavigation();
@@ -92,7 +96,10 @@ const DashboardScreen = () => {
         }
       }
     } catch (error) {
-      console.error('Error loading care recipients:', error);
+      // Silently handle 401 errors (unauthorized) - user might not be logged in
+      if (error.response?.status !== 401) {
+        console.error('Error loading care recipients:', error);
+      }
     }
   };
 
@@ -797,19 +804,19 @@ const DashboardScreen = () => {
             return (
               <TouchableOpacity
                 key={index}
-                className="items-center mr-4 min-w-[50px]"
+                className={`items-center ${isIPad ? 'mr-6' : 'mr-4'} ${isIPad ? 'min-w-[70px]' : 'min-w-[50px]'}`}
                 onPress={() => setSelectedDate(day)}
                 activeOpacity={0.7}
               >
-                <Text className={`text-xs mb-2 font-medium ${
+                <Text className={`${isIPad ? 'text-sm' : 'text-xs'} mb-2 font-medium ${
                   (isDayToday || isDaySelected) ? 'text-primary font-semibold' : 'text-gray-600'
                 }`}>
                   {dayName}
                 </Text>
-                <View className={`w-10 h-10 rounded-full justify-center items-center ${
+                <View className={`${isIPad ? 'w-14 h-14' : 'w-10 h-10'} rounded-full justify-center items-center ${
                   (isDayToday || isDaySelected) ? 'bg-primary' : 'bg-transparent'
                 }`}>
-                  <Text className={`text-base font-medium ${
+                  <Text className={`${isIPad ? 'text-lg' : 'text-base'} font-medium ${
                     (isDayToday || isDaySelected) ? 'text-white font-semibold' : 'text-gray-600'
                   }`}>
                     {dayNumber}
@@ -822,9 +829,9 @@ const DashboardScreen = () => {
       </View>
 
       {/* Medications for Selected Date */}
-      <View className="px-5 py-5 border-b border-gray-300">
+      <View className={`${isIPad ? 'px-8' : 'px-5'} py-5 border-b border-gray-300`}>
         <View className="flex-row justify-between items-center mb-4">
-          <Text className="text-xl font-bold text-gray-600">Medications</Text>
+          <Text className={`${isIPad ? 'text-2xl' : 'text-xl'} font-bold text-gray-600`}>Medications</Text>
           {cachedMedicationsForDate.length > 0 && (
             <TouchableOpacity 
               onPress={() => requireAuth(
@@ -839,7 +846,7 @@ const DashboardScreen = () => {
         </View>
 
         {cachedMedicationsForDate.length > 0 ? (
-          <View className="mt-2.5">
+          <View className={`mt-2.5 ${isIPad ? 'flex-row flex-wrap' : ''}`}>
             {cachedMedicationsForDate.map((entry, index) => {
               const med = entry.medication;
               const time = entry.time;
@@ -882,7 +889,7 @@ const DashboardScreen = () => {
               return (
                 <TouchableOpacity
                   key={`${med.id}-${time}-${index}`}
-                  className={`bg-white p-4 mb-3 border rounded-xl relative ${
+                  className={`bg-white ${isIPad ? 'w-[48%] mr-2' : 'w-full'} p-4 mb-3 border rounded-xl relative ${
                     med.is_care_recipient ? 'border-l-4 border-l-blue-500' : 'border-gray-300'
                   } ${getStatusColor()}`}
                   onPress={() => requireAuth(
@@ -915,11 +922,11 @@ const DashboardScreen = () => {
                     
                     <View className="flex-row items-center">
                       <View className="mr-3">
-                        {getMedicationIcon(med.medication_type || 'tablet', 24)}
+                        {getMedicationIcon(med.medication_type || 'tablet', isIPad ? 32 : 24)}
                       </View>
                       <View className="flex-1">
                         <View className="flex-row items-center">
-                          <Text className="text-base font-semibold text-gray-600 mb-1">
+                          <Text className={`${isIPad ? 'text-lg' : 'text-base'} font-semibold text-gray-600 mb-1`}>
                             {med.name}
                           </Text>
                           {med.is_care_recipient && (
@@ -928,14 +935,14 @@ const DashboardScreen = () => {
                             </View>
                           )}
                         </View>
-                        <Text className="text-sm text-gray-600 mb-1">
+                        <Text className={`${isIPad ? 'text-base' : 'text-sm'} text-gray-600 mb-1`}>
                           {med.dosage}
                         </Text>
-                        <Text className="text-sm text-gray-600">
+                        <Text className={`${isIPad ? 'text-base' : 'text-sm'} text-gray-600`}>
                           {formatTime(time)}
                         </Text>
                         {med.quantity_remaining !== null && med.quantity_remaining !== undefined && (
-                          <Text className="text-xs text-gray-400 mt-0.5">
+                          <Text className={`${isIPad ? 'text-sm' : 'text-xs'} text-gray-400 mt-0.5`}>
                             {med.quantity_remaining} remaining
                           </Text>
                         )}

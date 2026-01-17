@@ -9,7 +9,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "migrate:medication-type": "node scripts/add-medication-type.js"
+    "migrate:medication-type": "node scripts/add-medication-type.js",
+    "fix-screenshots": "node scripts/fix-screenshots.js"
   },
   "keywords": [
     "medication",

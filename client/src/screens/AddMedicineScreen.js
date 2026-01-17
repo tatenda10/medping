@@ -202,10 +202,19 @@ const AddMedicineScreen = ({ navigation }) => {
         alternating_days_off: schedulePattern === 'alternating' && alternatingType === 'day_cycle' ? parseInt(alternatingDaysOff) : null,
       };
 
-      // Save to local database first (offline-first)
-      console.log('💾 Saving medication to local database...');
-      await databaseService.saveMedication(medicationData, true);
-      console.log('✅ Medication saved to local database');
+      // Save to local database first (offline-first) - skip on web
+      if (Platform.OS !== 'web') {
+        try {
+          console.log('💾 Saving medication to local database...');
+          await databaseService.saveMedication(medicationData, true);
+          console.log('✅ Medication saved to local database');
+        } catch (dbError) {
+          console.warn('⚠️ Failed to save to local database:', dbError.message);
+          // Continue - will try to save to server
+        }
+      } else {
+        console.log('🌐 Web platform - skipping local database save');
+      }
 
       // Schedule notifications for the new medication (don't block on errors)
       try {
@@ -232,9 +241,15 @@ const AddMedicineScreen = ({ navigation }) => {
           );
 
           if (response.data.success) {
-            // Update local record with server data
-            await databaseService.saveMedication(response.data.medication, false);
-            await databaseService.markMedicationSynced(medicationId);
+            // Update local record with server data (skip on web)
+            if (Platform.OS !== 'web') {
+              try {
+                await databaseService.saveMedication(response.data.medication, false);
+                await databaseService.markMedicationSynced(medicationId);
+              } catch (dbError) {
+                console.warn('⚠️ Failed to update local database with server data:', dbError.message);
+              }
+            }
           }
         } catch (error) {
           console.log('📴 Offline or server error - saved locally, will sync later');

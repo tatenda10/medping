@@ -1,4 +1,10 @@
-import * as SQLite from 'expo-sqlite';
+import { Platform } from 'react-native';
+
+// Only import SQLite on native platforms (not web)
+let SQLite = null;
+if (Platform.OS !== 'web') {
+  SQLite = require('expo-sqlite');
+}
 
 class DatabaseService {
   constructor() {
@@ -16,6 +22,15 @@ class DatabaseService {
    * Ensure database is initialized
    */
   async ensureInitialized() {
+    // Skip on web platform
+    if (Platform.OS === 'web') {
+      return;
+    }
+
+    if (!SQLite) {
+      return;
+    }
+
     // Check circuit breaker
     if (this.failureCount >= this.maxFailures) {
       const timeSinceLastFailure = Date.now() - (this.lastFailureTime || 0);
@@ -111,6 +126,19 @@ class DatabaseService {
    * Initialize database and create tables
    */
   async init() {
+    // Skip initialization on web platform
+    if (Platform.OS === 'web') {
+      console.log('⚠️ SQLite not available on web platform');
+      this.initialized = true;
+      return;
+    }
+
+    if (!SQLite) {
+      console.warn('⚠️ SQLite module not available');
+      this.initialized = true;
+      return;
+    }
+
     // Prevent concurrent initialization
     if (this.isInitializing) {
       // Wait for ongoing initialization
@@ -227,6 +255,8 @@ class DatabaseService {
       const createAppointmentsTable = `CREATE TABLE IF NOT EXISTS appointments (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL, doctor_name TEXT, appointment_type TEXT, scheduled_time TEXT NOT NULL, location TEXT, notes TEXT, reminder_minutes INTEGER DEFAULT 60, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP, server_synced INTEGER DEFAULT 0)`;
       
       const createSyncQueueTable = `CREATE TABLE IF NOT EXISTS sync_queue (id TEXT PRIMARY KEY, operation_type TEXT NOT NULL, table_name TEXT NOT NULL, record_id TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, retry_count INTEGER DEFAULT 0)`;
+      
+      const createQuestionnaireAnswersTable = `CREATE TABLE IF NOT EXISTS questionnaire_answers (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, answers TEXT NOT NULL, completed_at TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, server_synced INTEGER DEFAULT 0)`;
       
       // Create tables one by one using runAsync (more reliable than execAsync)
       // Always use this.db to ensure we're using the same database object
@@ -406,6 +436,27 @@ class DatabaseService {
         }
       }
 
+      // Try to create questionnaire_answers table
+      try {
+        if (!this.db || typeof this.db.runAsync !== 'function') {
+          throw new Error('Database object invalid');
+        }
+        await this.db.runAsync(createQuestionnaireAnswersTable);
+        console.log('✅ Questionnaire answers table created/verified');
+      } catch (error) {
+        if (error.message && error.message.includes('NullPointerException')) {
+          console.error('❌ NullPointerException during questionnaire_answers table creation');
+          this.db = null;
+          this.initialized = false;
+          throw new Error('Database NullPointerException');
+        }
+        if (error.message && error.message.includes('already exists')) {
+          console.log('✅ Questionnaire answers table already exists');
+        } else {
+          console.warn('⚠️ Questionnaire answers table creation warning:', error.message);
+        }
+      }
+
       // Create indexes (non-critical, continue even if they fail)
       const indexes = [
         'CREATE INDEX IF NOT EXISTS idx_medications_user_id ON medications(user_id)',
@@ -464,6 +515,12 @@ class DatabaseService {
    */
   async saveMedication(medication, isNew = true) {
     try {
+      // On web platform, SQLite is not available - return early
+      if (Platform.OS === 'web') {
+        console.log('⚠️ SQLite not available on web - skipping local save');
+        return { ...medication, id: medication.id || `med_${Date.now()}` };
+      }
+
       await this.ensureInitialized();
       
       if (!this.db) {
@@ -553,6 +610,11 @@ class DatabaseService {
 
   async getMedications(userId) {
     try {
+      // Skip on web platform
+      if (Platform.OS === 'web') {
+        return [];
+      }
+
       await this.ensureInitialized();
       
       // Double-check database is valid before use
@@ -1261,6 +1323,64 @@ class DatabaseService {
     } catch (error) {
       console.error('Error deleting appointment:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Save questionnaire answers
+   */
+  async saveQuestionnaireAnswers(userId, answers) {
+    try {
+      await this.ensureInitialized();
+      
+      if (!this.db) {
+        throw new Error('Database is null - cannot save questionnaire answers');
+      }
+
+      const id = `questionnaire_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const now = new Date().toISOString();
+      const answersJson = JSON.stringify(answers);
+
+      await this.db.runAsync(
+        `INSERT OR REPLACE INTO questionnaire_answers (id, user_id, answers, completed_at, created_at, server_synced) VALUES (?, ?, ?, ?, ?, 0)`,
+        [id, userId, answersJson, now, now]
+      );
+
+      return id;
+    } catch (error) {
+      console.error('Error saving questionnaire answers:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get questionnaire answers for a user
+   */
+  async getQuestionnaireAnswers(userId) {
+    try {
+      await this.ensureInitialized();
+      
+      if (!this.db) {
+        console.error('Database is null - cannot get questionnaire answers');
+        return null;
+      }
+
+      const result = await this.db.getFirstAsync(
+        `SELECT * FROM questionnaire_answers WHERE user_id = ? ORDER BY completed_at DESC LIMIT 1`,
+        [userId]
+      );
+
+      if (result) {
+        return {
+          ...result,
+          answers: JSON.parse(result.answers),
+        };
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error getting questionnaire answers:', error);
+      return null;
     }
   }
 }

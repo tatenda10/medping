@@ -16,7 +16,10 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mediping.app",
-      "googleServicesFile": "./GoogleService-Info.plist"
+      "googleServicesFile": "./GoogleService-Info.plist",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -35,14 +38,19 @@
             "googleServicesFile": "./google-services.json"
           },
           "ios": {
-            "googleServicesFile": "./GoogleService-Info.plist"
+            "googleServicesFile": "./GoogleService-Info.plist",
+            "useFrameworks": "static",
+            "podfileProperties": {
+              "use_modular_headers!": true
+            },
+            "buildReactNativeFromSource": true
           }
         }
       ]
     ],
     "web": {
-        "favicon": "./assets/logo.png",
-        "bundler": "metro"
+      "favicon": "./assets/logo.png",
+      "bundler": "metro"
     },
     "extra": {
       "eas": {

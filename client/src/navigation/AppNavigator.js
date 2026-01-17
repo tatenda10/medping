@@ -11,6 +11,7 @@ import { useNotificationHandler } from '../hooks/useNotificationHandler';
 import { navigationRef } from './navigationRef';
 import CreateAccountPrompt from '../components/CreateAccountPrompt';
 import { useAuth } from '../context/AuthContext';
+import databaseService from '../services/databaseService';
 
 
 // Screens
@@ -53,7 +54,9 @@ const NotificationHandler = () => {
 
 // Main Tab Navigator (with FAB wrapper)
 const MainTabs = ({ navigation, onLogout }) => {
-  const { isAuthenticated, isAuthSync } = useAuth();
+  const authContext = useAuth();
+  const { isAuthenticated, isAuthSync } = authContext;
+  const authToken = authContext?.authToken || null;
   const [showCreateAccountPrompt, setShowCreateAccountPrompt] = React.useState(false);
   const [promptMessage, setPromptMessage] = React.useState('');
 
@@ -278,7 +281,8 @@ const DashboardScreenWithHeader = ({ navigation }) => {
 
 // Drawer Navigator
 const DrawerNavigator = ({ onLogout }) => {
-  const { authToken } = useAuth();
+  const authContext = useAuth();
+  const authToken = authContext?.authToken || null;
   return (
     <Drawer.Navigator
       drawerContent={(props) => <DrawerContent {...props} onLogout={onLogout} />}
@@ -397,28 +401,38 @@ const AppNavigator = () => {
       await refreshAuth();
       
       const userData = await AsyncStorage.getItem('userData');
+      const parsedUserData = userData ? JSON.parse(userData) : null;
+      const userId = parsedUserData?.id || parsedUserData?.user?.id || null;
       
-      // Check if onboarding is completed (for both authenticated and guest users)
+      // Check if there's any data (medications) - this is the key check
+      const hasData = await onboardingService.hasAnyMedications(userId);
+      
+      // If no data exists, always show onboarding (Get Started page)
+      if (!hasData) {
+        setNeedsOnboarding(true);
+        setIsLoading(false);
+        return;
+      }
+      
+      // If data exists, check if onboarding is completed
       const completed = await onboardingService.hasCompletedOnboarding();
       
       if (authToken && userData) {
+        // Authenticated user with data - show MainApp if onboarding completed
         setNeedsOnboarding(!completed);
       } else {
-        // No token - check if onboarding is completed
-        // If completed, allow access to MainApp even without authentication (guest mode)
+        // No token but has data (guest mode) - show MainApp if onboarding completed
         if (completed) {
           setNeedsOnboarding(false); // Onboarding done, show MainApp
         } else {
-          // Check if there's guest data (user started onboarding)
-          const hasGuestData = await onboardingService.hasGuestMedications();
-          if (hasGuestData) {
-            // User started onboarding but didn't complete it
-            setNeedsOnboarding(true);
-          }
+          // Has data but onboarding not completed - show onboarding
+          setNeedsOnboarding(true);
         }
       }
     } catch (error) {
       console.error('Error checking auth status:', error);
+      // On error, default to showing onboarding
+      setNeedsOnboarding(true);
     } finally {
       setIsLoading(false);
     }
@@ -477,12 +491,102 @@ const AppNavigator = () => {
   };
 
   const handleLogout = async () => {
+    console.log('🔴 AppNavigator handleLogout called');
     try {
+      // Clear auth data
+      console.log('🔴 Clearing userData...');
       await AsyncStorage.removeItem('userData');
+      console.log('🔴 Clearing authToken...');
+      await AsyncStorage.removeItem('authToken');
+      console.log('🔴 Updating auth context...');
       await updateAuth(null); // This clears auth token and updates context
-      setNeedsOnboarding(false);
+      console.log('🔴 Auth context updated');
+      
+      // Clear all guest data from database
+      console.log('🔴 Clearing guest data from database...');
+      try {
+        await databaseService.ensureInitialized();
+        if (databaseService.db) {
+          // Get guest record IDs before deletion (for sync_queue cleanup)
+          const guestMedications = await databaseService.db.getAllAsync('SELECT id FROM medications WHERE user_id = ?', ['guest']);
+          const guestDoseLogs = await databaseService.db.getAllAsync('SELECT id FROM dose_logs WHERE user_id = ?', ['guest']);
+          const guestAppointments = await databaseService.db.getAllAsync('SELECT id FROM appointments WHERE user_id = ?', ['guest']);
+          
+          // Delete all guest data
+          await databaseService.db.runAsync('DELETE FROM medications WHERE user_id = ?', ['guest']);
+          await databaseService.db.runAsync('DELETE FROM dose_logs WHERE user_id = ?', ['guest']);
+          await databaseService.db.runAsync('DELETE FROM refills WHERE user_id = ?', ['guest']);
+          await databaseService.db.runAsync('DELETE FROM vitals_logs WHERE user_id = ?', ['guest']);
+          await databaseService.db.runAsync('DELETE FROM health_logs WHERE user_id = ?', ['guest']);
+          await databaseService.db.runAsync('DELETE FROM appointments WHERE user_id = ?', ['guest']);
+          await databaseService.db.runAsync('DELETE FROM questionnaire_answers WHERE user_id = ?', ['guest']);
+          
+          // Clean up sync_queue items for guest records (they won't sync anyway)
+          for (const med of guestMedications) {
+            await databaseService.db.runAsync(
+              'DELETE FROM sync_queue WHERE table_name = ? AND record_id = ?',
+              ['medications', med.id]
+            );
+          }
+          for (const log of guestDoseLogs) {
+            await databaseService.db.runAsync(
+              'DELETE FROM sync_queue WHERE table_name = ? AND record_id = ?',
+              ['dose_logs', log.id]
+            );
+          }
+          for (const appt of guestAppointments) {
+            await databaseService.db.runAsync(
+              'DELETE FROM sync_queue WHERE table_name = ? AND record_id = ?',
+              ['appointments', appt.id]
+            );
+          }
+          
+          console.log('✅ Guest data cleared from database');
+        }
+      } catch (dbError) {
+        console.warn('⚠️ Error clearing guest data from database:', dbError);
+        // Continue anyway
+      }
+      
+      // Clear onboarding flags and questionnaire
+      console.log('🔴 Clearing onboarding data...');
+      await AsyncStorage.multiRemove([
+        'onboarding_completed',
+        'onboarding_questionnaire',
+      ]);
+      console.log('✅ Onboarding data cleared');
+      
+      // Navigate to Login screen first
+      if (navigationRef.current?.isReady()) {
+        console.log('🔴 Navigating to Login screen...');
+        try {
+          // Try to navigate first
+          navigationRef.current.navigate('Login');
+          console.log('🔴 Navigated to Login');
+          
+          // Then reset the navigation stack after a short delay
+          setTimeout(() => {
+            console.log('🔴 Resetting navigation stack...');
+            navigationRef.current.dispatch(
+              CommonActions.reset({
+                index: 0,
+                routes: [{ name: 'Login' }],
+              })
+            );
+            console.log('🔴 Navigation stack reset');
+          }, 200);
+        } catch (navError) {
+          console.error('❌ Navigation error during logout:', navError);
+          // Fallback: set needsOnboarding to trigger re-render
+          console.log('🔴 Using fallback: setting needsOnboarding to true');
+          setNeedsOnboarding(true);
+        }
+      } else {
+        console.warn('⚠️ Navigation ref not ready, setting needsOnboarding to true');
+        setNeedsOnboarding(true);
+      }
     } catch (error) {
-      console.error('Error logging out:', error);
+      console.error('❌ Error logging out:', error);
     }
   };
 

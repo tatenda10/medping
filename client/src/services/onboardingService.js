@@ -67,7 +67,7 @@ class OnboardingService {
    */
   async migrateGuestDataToUser(userId, authToken) {
     try {
-      // 1. Get questionnaire answers
+      // 1. Get questionnaire answers from AsyncStorage
       const questionnaireAnswers = await this.getQuestionnaireAnswers();
 
       // 2. Get guest medications
@@ -81,6 +81,27 @@ class OnboardingService {
           user_id: userId,
         };
         await databaseService.saveMedication(updatedMedication, false);
+
+        // Also migrate dose logs and refills for this medication
+        try {
+          await databaseService.ensureInitialized();
+          if (databaseService.db) {
+            // Update dose logs for this medication
+            await databaseService.db.runAsync(
+              `UPDATE dose_logs SET user_id = ? WHERE user_id = 'guest' AND medication_id = ?`,
+              [userId, medication.id]
+            );
+            
+            // Update refills for this medication
+            await databaseService.db.runAsync(
+              `UPDATE refills SET user_id = ? WHERE user_id = 'guest' AND medication_id = ?`,
+              [userId, medication.id]
+            );
+          }
+        } catch (migrationError) {
+          console.log('Error migrating dose logs/refills for medication:', migrationError);
+          // Continue with next medication
+        }
 
         // Try to sync to server
         try {
@@ -105,7 +126,29 @@ class OnboardingService {
         }
       }
 
-      // 4. Save questionnaire answers to user profile (if server supports it)
+      // 4. Migrate questionnaire answers from database (update user_id from 'guest' to userId)
+      try {
+        await databaseService.ensureInitialized();
+        if (databaseService.db && questionnaireAnswers) {
+          // Update existing guest questionnaire answers to user's ID
+          await databaseService.db.runAsync(
+            `UPDATE questionnaire_answers SET user_id = ? WHERE user_id = 'guest'`,
+            [userId]
+          );
+        }
+      } catch (error) {
+        console.log('Error migrating questionnaire answers from database:', error);
+        // If update fails, try to save new record
+        if (questionnaireAnswers) {
+          try {
+            await databaseService.saveQuestionnaireAnswers(userId, questionnaireAnswers);
+          } catch (saveError) {
+            console.log('Error saving questionnaire answers to database:', saveError);
+          }
+        }
+      }
+
+      // 5. Save questionnaire answers to user profile on server (if server supports it)
       if (questionnaireAnswers) {
         try {
           await axios.post(
@@ -123,10 +166,10 @@ class OnboardingService {
         }
       }
 
-      // 5. Clear guest data
+      // 6. Clear guest data from AsyncStorage
       await this.clearGuestData();
 
-      // 6. Mark onboarding as completed
+      // 7. Mark onboarding as completed
       await this.markOnboardingCompleted();
 
       return {
@@ -163,6 +206,34 @@ class OnboardingService {
       const medications = await this.getGuestMedications();
       return medications.length > 0;
     } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * Check if user has any medications (guest or authenticated)
+   */
+  async hasAnyMedications(userId = null) {
+    try {
+      await databaseService.ensureInitialized();
+      
+      // Check guest medications
+      const guestMedications = await databaseService.getMedications('guest');
+      if (guestMedications.length > 0) {
+        return true;
+      }
+      
+      // If userId provided, check user medications
+      if (userId) {
+        const userMedications = await databaseService.getMedications(userId);
+        if (userMedications.length > 0) {
+          return true;
+        }
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('Error checking for medications:', error);
       return false;
     }
   }

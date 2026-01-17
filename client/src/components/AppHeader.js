@@ -20,7 +20,10 @@ const AppHeader = ({ navigation, title }) => {
 
 const styles = StyleSheet.create({
   safeArea: {
-    backgroundColor: '#fff',
+    backgroundColor: '#4285F4',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    overflow: 'hidden',
   },
   header: {
     flexDirection: 'row',
@@ -29,14 +32,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 10,
     paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-    backgroundColor: '#fff',
+    backgroundColor: '#4285F4',
   },
   appTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#4285F4',
+    color: '#fff',
     flex: 1,
   },
   menuButton: {
@@ -47,13 +48,8 @@ const styles = StyleSheet.create({
   },
   menuIcon: {
     fontSize: 28,
-    color: '#333',
+    color: '#fff',
     fontWeight: 'bold',
-  },
-  appTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#4285F4',
   },
 });
 

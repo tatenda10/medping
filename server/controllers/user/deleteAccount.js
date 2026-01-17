@@ -31,6 +31,20 @@ const deleteAccount = async (req, res) => {
       },
     });
 
+    // Delete all vitals logs
+    await prisma.vitalsLog.deleteMany({
+      where: {
+        user_id: userId,
+      },
+    });
+
+    // Delete all appointments
+    await prisma.appointment.deleteMany({
+      where: {
+        user_id: userId,
+      },
+    });
+
     // Delete all health logs
     await prisma.healthLog.deleteMany({
       where: {

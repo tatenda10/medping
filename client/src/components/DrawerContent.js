@@ -5,8 +5,10 @@ import axios from 'axios';
 import BASE_URL from '../context/Api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../context/AuthContext';
 
 const DrawerContent = ({ navigation, onLogout }) => {
+  const { isAuthenticated, authToken } = useAuth();
   const [pendingInvitations, setPendingInvitations] = useState([]);
   const [loadingInvitations, setLoadingInvitations] = useState(true);
 
@@ -22,7 +24,10 @@ const DrawerContent = ({ navigation, onLogout }) => {
   const loadInvitations = async () => {
     try {
       const token = await AsyncStorage.getItem('authToken');
-      if (!token) return;
+      if (!token) {
+        setLoadingInvitations(false);
+        return;
+      }
 
       const response = await axios.get(`${BASE_URL}/caregivers/invitations`, {
         headers: {
@@ -35,17 +40,36 @@ const DrawerContent = ({ navigation, onLogout }) => {
         setPendingInvitations(received.filter(inv => inv.status === 'pending'));
       }
     } catch (error) {
-      console.error('Error loading invitations:', error);
+      // Silently handle 401 errors (unauthorized) - user might not be logged in
+      if (error.response?.status !== 401) {
+        console.error('Error loading invitations:', error);
+      }
     } finally {
       setLoadingInvitations(false);
     }
   };
 
   const handleLogout = async () => {
-    if (onLogout) {
-      await onLogout();
+    console.log('🔴 Logout button clicked!');
+    console.log('🔴 onLogout function exists:', !!onLogout);
+    try {
+      // Close drawer first
+      console.log('🔴 Closing drawer...');
+      navigation.closeDrawer();
+      
+      // Small delay to ensure drawer closes before navigation reset
+      setTimeout(async () => {
+        console.log('🔴 Calling onLogout...');
+        if (onLogout) {
+          await onLogout();
+          console.log('🔴 onLogout completed');
+        } else {
+          console.warn('⚠️ onLogout function not provided');
+        }
+      }, 300);
+    } catch (error) {
+      console.error('❌ Error in handleLogout:', error);
     }
-    navigation.closeDrawer();
   };
 
   return (
@@ -197,15 +221,22 @@ const DrawerContent = ({ navigation, onLogout }) => {
         )}
       </View>
 
-      <View style={styles.footer}>
-        <TouchableOpacity
-          style={styles.logoutItem}
-          onPress={handleLogout}
-        >
-          <MaterialIcons name="logout" size={24} color="#d32f2f" style={styles.logoutIcon} />
-          <Text style={styles.logoutText}>Logout</Text>
-        </TouchableOpacity>
-      </View>
+      {/* Only show logout button if user is authenticated */}
+      {isAuthenticated && authToken && (
+        <View style={styles.footer}>
+          <TouchableOpacity
+            style={styles.logoutItem}
+            onPress={() => {
+              console.log('🔴 TouchableOpacity onPress triggered');
+              handleLogout();
+            }}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="logout" size={24} color="#d32f2f" style={styles.logoutIcon} />
+            <Text style={styles.logoutText}>Logout</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </SafeAreaView>
   );
 };

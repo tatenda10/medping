@@ -608,28 +608,35 @@ const notificationActions = [
   },
 ];
 
-Notifications.setNotificationCategoryAsync('MEDICATION_REMINDER', notificationActions);
-Notifications.setNotificationCategoryAsync('MEDICATION_REMINDER_GROUPED', notificationActions);
+// Set up notification categories (only on native platforms, not web)
+if (Platform.OS !== 'web') {
+  try {
+    Notifications.setNotificationCategoryAsync('MEDICATION_REMINDER', notificationActions);
+    Notifications.setNotificationCategoryAsync('MEDICATION_REMINDER_GROUPED', notificationActions);
 
-// Create appointment reminder category
-const appointmentActions = [
-  {
-    identifier: 'VIEW',
-    buttonTitle: 'View',
-    options: {
-      opensAppToForeground: true,
-    },
-  },
-  {
-    identifier: 'SNOOZE_15',
-    buttonTitle: 'Snooze 15min',
-    options: {
-      opensAppToForeground: false,
-    },
-  },
-];
+    // Create appointment reminder category
+    const appointmentActions = [
+      {
+        identifier: 'VIEW',
+        buttonTitle: 'View',
+        options: {
+          opensAppToForeground: true,
+        },
+      },
+      {
+        identifier: 'SNOOZE_15',
+        buttonTitle: 'Snooze 15min',
+        options: {
+          opensAppToForeground: false,
+        },
+      },
+    ];
 
-Notifications.setNotificationCategoryAsync('APPOINTMENT_REMINDER', appointmentActions);
+    Notifications.setNotificationCategoryAsync('APPOINTMENT_REMINDER', appointmentActions);
+  } catch (error) {
+    console.log('Notification categories not available on this platform:', error);
+  }
+}
 
 export default new NotificationService();
 

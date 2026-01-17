@@ -9,10 +9,12 @@ import AppHeader from '../components/AppHeader';
 import databaseService from '../services/databaseService';
 import exportService from '../services/exportService';
 import CreateAccountPrompt from '../components/CreateAccountPrompt';
+import clearAllData from '../utils/clearAllData';
 
 const SettingsScreen = ({ navigation, onLogout }) => {
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [showCreateAccountPrompt, setShowCreateAccountPrompt] = useState(false);
   const [promptMessage, setPromptMessage] = useState('');
@@ -108,6 +110,10 @@ const SettingsScreen = ({ navigation, onLogout }) => {
             await databaseService.db.runAsync('DELETE FROM medications WHERE user_id = ?', [userId]);
             await databaseService.db.runAsync('DELETE FROM dose_logs WHERE user_id = ?', [userId]);
             await databaseService.db.runAsync('DELETE FROM refills WHERE user_id = ?', [userId]);
+            await databaseService.db.runAsync('DELETE FROM vitals_logs WHERE user_id = ?', [userId]);
+            await databaseService.db.runAsync('DELETE FROM health_logs WHERE user_id = ?', [userId]);
+            await databaseService.db.runAsync('DELETE FROM appointments WHERE user_id = ?', [userId]);
+            await databaseService.db.runAsync('DELETE FROM questionnaire_answers WHERE user_id = ?', [userId]);
             await databaseService.db.runAsync('DELETE FROM sync_queue');
             console.log('✅ Local database cleared');
           }
@@ -183,6 +189,43 @@ const SettingsScreen = ({ navigation, onLogout }) => {
     } finally {
       setExporting(false);
     }
+  };
+
+  const handleClearAllData = () => {
+    Alert.alert(
+      'Clear All Local Data',
+      'This will permanently delete all local data from this device:\n\n• All medications\n• All dose logs\n• All health data\n• All appointments\n• All sync queue data\n• Authentication tokens\n• Onboarding data\n\nThis action cannot be undone. Your data on the server will NOT be affected.\n\nContinue?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Clear All Data',
+          style: 'destructive',
+          onPress: async () => {
+            setClearing(true);
+            try {
+              await clearAllData(true);
+              // Navigate to login after clearing
+              if (onLogout) {
+                onLogout();
+              } else {
+                navigation.reset({
+                  index: 0,
+                  routes: [{ name: 'Login' }],
+                });
+              }
+            } catch (error) {
+              console.error('Error clearing data:', error);
+              // Error alert is shown by clearAllData
+            } finally {
+              setClearing(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -262,6 +305,25 @@ const SettingsScreen = ({ navigation, onLogout }) => {
               </View>
             </View>
             {!exporting && <MaterialIcons name="chevron-right" size={24} color="#999" />}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.settingItem, styles.warningItem]}
+            onPress={handleClearAllData}
+            disabled={clearing}
+          >
+            <View style={styles.settingLeft}>
+              <MaterialIcons name="delete-sweep" size={24} color="#FF9800" style={styles.settingIconMaterial} />
+              <View>
+                <Text style={[styles.settingTitle, styles.warningText]}>
+                  {clearing ? 'Clearing Data...' : 'Clear All Local Data'}
+                </Text>
+                <Text style={styles.settingSubtitle}>
+                  Delete all local data from this device only
+                </Text>
+              </View>
+            </View>
+            {!clearing && <MaterialIcons name="chevron-right" size={24} color="#999" />}
           </TouchableOpacity>
         </View>
 
@@ -377,6 +439,13 @@ const styles = StyleSheet.create({
   },
   dangerText: {
     color: '#E53935',
+  },
+  warningItem: {
+    borderColor: '#FFF3E0',
+    backgroundColor: '#FFF8E1',
+  },
+  warningText: {
+    color: '#FF9800',
   },
 });
 

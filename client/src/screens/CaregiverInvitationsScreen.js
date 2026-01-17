@@ -28,6 +28,11 @@ const CaregiverInvitationsScreen = ({ navigation }) => {
   const loadInvitations = async () => {
     try {
       const token = await AsyncStorage.getItem('authToken');
+      if (!token) {
+        setLoading(false);
+        return;
+      }
+
       const response = await axios.get(`${BASE_URL}/caregivers/invitations`, {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -40,7 +45,10 @@ const CaregiverInvitationsScreen = ({ navigation }) => {
       }
     } catch (error) {
       console.error('Error loading invitations:', error);
-      Alert.alert('Error', 'Failed to load invitations');
+      // Don't show alert for 401 errors (unauthorized) - user might not be logged in
+      if (error.response?.status !== 401) {
+        Alert.alert('Error', 'Failed to load invitations');
+      }
     } finally {
       setLoading(false);
     }

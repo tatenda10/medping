@@ -16,8 +16,33 @@ const appointmentRoutes = require('./routes/appointments');
 const app = express();
 
 // Middleware
+// CORS configuration - allow multiple origins for development
+const allowedOrigins = config.CORS_ORIGIN 
+  ? config.CORS_ORIGIN.split(',').map(origin => origin.trim())
+  : ['http://localhost:19006', 'http://localhost:8081', 'http://localhost:3000'];
+
 app.use(cors({
-  origin: config.CORS_ORIGIN,
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Check if origin is in allowed list
+    if (allowedOrigins.includes(origin) || 
+        origin.startsWith('http://localhost:') || 
+        origin.startsWith('http://192.168.') ||
+        origin.startsWith('http://10.0.') ||
+        origin.startsWith('http://172.')) {
+      return callback(null, true);
+    }
+    
+    // In production, be more strict
+    if (config.NODE_ENV === 'production') {
+      return callback(new Error('Not allowed by CORS'));
+    }
+    
+    // In development, allow localhost and local network
+    callback(null, true);
+  },
   credentials: true,
 }));
 
@@ -60,7 +85,6 @@ app.listen(PORT, HOST, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📱 Environment: ${config.NODE_ENV}`);
   console.log(`📱 Environment: ${config.NODE_ENV}`);
-
   console.log(`🌐 Server accessible at http://0.0.0.0:${PORT}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
 });

@@ -25,9 +25,20 @@ class AuthService {
       };
     } catch (error) {
       console.error('Registration error:', error);
+      
+      // Handle 409 Conflict (email already exists)
+      if (error.response?.status === 409) {
+        return {
+          success: false,
+          error: 'This email is already registered. Please try logging in instead.',
+          statusCode: 409,
+        };
+      }
+      
       return {
         success: false,
         error: error.response?.data?.message || error.message || 'Registration failed',
+        statusCode: error.response?.status,
       };
     }
   }
@@ -62,8 +73,8 @@ class AuthService {
    */
   async signInWithGoogle() {
     try {
-      // OAuth endpoint is at root, not under /api
-      const oauthInitiateUrl = `${BASE_URL}/oauth/google`;
+      // OAuth endpoint is under /user-auth
+      const oauthInitiateUrl = `${BASE_URL}/user-auth/oauth/google`;
 
       console.log('🚀 Initiating Google OAuth via server:', oauthInitiateUrl);
 
@@ -134,7 +145,7 @@ class AuthService {
   async signInWithApple() {
     try {
       // OAuth endpoint is at root, not under /api
-      const oauthInitiateUrl = `${BASE_URL}/oauth/apple`;
+      const oauthInitiateUrl = `${BASE_URL}/user-auth/oauth/apple`;
 
       console.log('🚀 Initiating Apple OAuth via server:', oauthInitiateUrl);
 

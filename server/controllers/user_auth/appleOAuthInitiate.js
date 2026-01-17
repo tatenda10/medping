@@ -36,7 +36,7 @@ const generateAppleClientSecret = () => {
 const initiateAppleOAuth = async (req, res) => {
   try {
     const appleClientId = config.APPLE_CLIENT_ID;
-    const redirectUri = config.APPLE_REDIRECT_URI || `${req.protocol}://${req.get('host')}/oauth/callback`;
+    const redirectUri = config.APPLE_REDIRECT_URI || `${req.protocol}://${req.get('host')}/user-auth/oauth/callback`;
 
     if (!appleClientId || !config.APPLE_TEAM_ID) {
       return res.status(500).json({ message: 'Apple OAuth not configured' });

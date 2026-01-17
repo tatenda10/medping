@@ -186,7 +186,22 @@ const SignUpScreen = ({ onSignUpSuccess }) => {
           onSignUpSuccess(result.user, result.token);
         }
       } else {
-        Alert.alert('Sign Up Failed', result.error || 'Failed to create account');
+        // Handle 409 specifically - suggest login
+        if (result.statusCode === 409) {
+          Alert.alert(
+            'Email Already Registered',
+            result.error || 'This email is already registered. Would you like to log in instead?',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { 
+                text: 'Log In', 
+                onPress: () => navigation.navigate('Login')
+              }
+            ]
+          );
+        } else {
+          Alert.alert('Sign Up Failed', result.error || 'Failed to create account');
+        }
       }
     } catch (error) {
       console.error('Email sign up error:', error);

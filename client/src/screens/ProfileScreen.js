@@ -9,11 +9,12 @@ import TIMEZONES from '../utils/timezones';
 import AppHeader from '../components/AppHeader';
 import { useAuthCheck } from '../hooks/useAuthCheck';
 import CreateAccountPrompt from '../components/CreateAccountPrompt';
+import syncService from '../services/syncService';
 
 const ProfileScreen = ({ navigation, userToken, onLogout }) => {
   const { isAuthenticated } = useAuthCheck();
   const [showCreateAccountPrompt, setShowCreateAccountPrompt] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState('');
@@ -24,35 +25,62 @@ const ProfileScreen = ({ navigation, userToken, onLogout }) => {
   const [email, setEmail] = useState('');
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      setShowCreateAccountPrompt(true);
-    } else {
-      loadUserProfile();
-    }
-  }, [isAuthenticated]);
+    loadUserProfile();
+  }, []);
 
   const loadUserProfile = async () => {
     setLoading(true);
     try {
-      const token = await AsyncStorage.getItem('authToken');
-      const response = await axios.get(`${BASE_URL}/user/me`, {
-        headers: {
-          'Authorization': `Bearer ${token || userToken}`,
-        },
-      });
-
-      if (response.data.success) {
-        const user = response.data.user;
+      // Load from local storage first (offline-first, just like other screens)
+      const userData = await AsyncStorage.getItem('userData');
+      const user = userData ? JSON.parse(userData) : null;
+      
+      if (user) {
+        // Load from local storage immediately
         setName(user.name || '');
         setEmail(user.email || '');
         setTimezone(user.timezone || 'UTC');
         setAge(user.profile?.age || null);
         setGender(user.profile?.gender || '');
+        setLoading(false);
+      } else {
+        // No local data - show empty profile
+        setLoading(false);
+      }
+
+      // Try to sync and fetch latest from server (if online, not based on authentication)
+      const online = await syncService.isOnline();
+      if (online) {
+        try {
+          const token = await AsyncStorage.getItem('authToken');
+          if (token) {
+            const response = await axios.get(`${BASE_URL}/user/me`, {
+              headers: {
+                'Authorization': `Bearer ${token}`,
+              },
+            });
+
+            if (response.data.success) {
+              const serverUser = response.data.user;
+              // Update local storage with server data
+              await AsyncStorage.setItem('userData', JSON.stringify(serverUser));
+              // Update UI
+              setName(serverUser.name || '');
+              setEmail(serverUser.email || '');
+              setTimezone(serverUser.timezone || 'UTC');
+              setAge(serverUser.profile?.age || null);
+              setGender(serverUser.profile?.gender || '');
+            }
+          }
+        } catch (error) {
+          // Silently handle errors - use local data
+          if (error.response?.status !== 401) {
+            console.log('Using local data - offline or server error:', error.message);
+          }
+        }
       }
     } catch (error) {
       console.error('Error loading profile:', error);
-      Alert.alert('Error', 'Failed to load profile');
-    } finally {
       setLoading(false);
     }
   };
@@ -76,6 +104,12 @@ const ProfileScreen = ({ navigation, userToken, onLogout }) => {
     setSaving(true);
     try {
       const token = await AsyncStorage.getItem('authToken');
+      const authToken = token || userToken;
+      if (!authToken) {
+        Alert.alert('Error', 'Authentication required');
+        setSaving(false);
+        return;
+      }
       const response = await axios.put(
         `${BASE_URL}/user/profile`,
         {
@@ -86,7 +120,7 @@ const ProfileScreen = ({ navigation, userToken, onLogout }) => {
         },
         {
           headers: {
-            'Authorization': `Bearer ${token || userToken}`,
+            'Authorization': `Bearer ${authToken}`,
           },
         }
       );
