@@ -13,6 +13,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { MaterialIcons } from '@expo/vector-icons';
+import { CommonActions } from '@react-navigation/native';
 import { MEDICATION_TYPES, getMedicationIcon } from '../../utils/medicationIcons';
 import databaseService from '../../services/databaseService';
 import firebaseService from '../../services/firebaseService';
@@ -136,14 +138,57 @@ const AddFirstMedicationScreen = ({ navigation }) => {
   };
 
   const handleSkip = async () => {
-    // Mark onboarding as complete
-    await onboardingService.completeOnboarding();
-    // Navigate to MainApp - AppNavigator will automatically show MainApp after re-check
-    if (navigationRef.isReady()) {
-      navigationRef.reset({
-        index: 0,
-        routes: [{ name: 'MainApp' }],
-      });
+    try {
+      console.log('⏭️ Skip button pressed');
+      // Mark onboarding as complete
+      await onboardingService.completeOnboarding();
+      console.log('✅ Onboarding marked as complete');
+      
+      // Wait a moment for AsyncStorage to update
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Always use navigationRef to reset navigation stack to MainApp
+      // This ensures we're resetting at the root level (AppNavigator)
+      if (navigationRef.current?.isReady()) {
+        console.log('🔄 Resetting navigation to MainApp via navigationRef');
+        navigationRef.current.dispatch(
+          CommonActions.reset({
+            index: 0,
+            routes: [{ name: 'MainApp' }],
+          })
+        );
+      } else {
+        console.warn('⚠️ Navigation ref not ready, waiting and retrying...');
+        // Wait a bit more and retry
+        setTimeout(() => {
+          if (navigationRef.current?.isReady()) {
+            console.log('🔄 Retrying navigation reset to MainApp');
+            navigationRef.current.dispatch(
+              CommonActions.reset({
+                index: 0,
+                routes: [{ name: 'MainApp' }],
+              })
+            );
+          } else {
+            console.error('❌ Navigation ref still not ready after retry');
+          }
+        }, 500);
+      }
+    } catch (error) {
+      console.error('❌ Error skipping medication:', error);
+      // Fallback: try to navigate using navigationRef one more time
+      try {
+        if (navigationRef.current?.isReady()) {
+          navigationRef.current.dispatch(
+            CommonActions.reset({
+              index: 0,
+              routes: [{ name: 'MainApp' }],
+            })
+          );
+        }
+      } catch (fallbackError) {
+        console.error('❌ Fallback navigation also failed:', fallbackError);
+      }
     }
   };
 
@@ -225,14 +270,31 @@ const AddFirstMedicationScreen = ({ navigation }) => {
             text: 'Go to Dashboard',
             style: 'default',
             onPress: async () => {
-              // Mark onboarding as complete
-              await onboardingService.completeOnboarding();
-              // Navigate to MainApp - AppNavigator will automatically show MainApp after re-check
-              if (navigationRef.isReady()) {
-                navigationRef.reset({
-                  index: 0,
-                  routes: [{ name: 'MainApp' }],
-                });
+              try {
+                // Mark onboarding as complete
+                await onboardingService.completeOnboarding();
+                // Wait a moment for AsyncStorage to update
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                // Use navigationRef to reset to MainApp at the root level
+                if (navigationRef.current?.isReady()) {
+                  navigationRef.current.dispatch(
+                    CommonActions.reset({
+                      index: 0,
+                      routes: [{ name: 'MainApp' }],
+                    })
+                  );
+                } else {
+                  const parent = navigation.getParent();
+                  if (parent) {
+                    parent.navigate('MainApp');
+                  } else {
+                    navigation.goBack();
+                  }
+                }
+              } catch (error) {
+                console.error('Error navigating to dashboard:', error);
+                navigation.getParent()?.goBack();
               }
             },
           },
@@ -247,10 +309,10 @@ const AddFirstMedicationScreen = ({ navigation }) => {
   return (
     <SafeAreaView className="flex-1 bg-white">
       {/* Header */}
-      <View className="bg-primary rounded-t-[20px] px-6 py-6 flex-row justify-between items-center">
-        <Text className="text-lg font-bold text-white flex-1">Add Med</Text>
+      <View className="px-6 py-6 flex-row justify-between items-center border-b border-gray-200">
+        <Text className="text-lg font-bold text-gray-900 flex-1">Add Medication</Text>
         <TouchableOpacity onPress={handleSkip} className="px-4 py-2">
-          <Text className="text-base text-white font-semibold">Skip</Text>
+          <Text className="text-base font-semibold" style={{ color: '#90CDF4' }}>Skip</Text>
         </TouchableOpacity>
       </View>
 
@@ -274,7 +336,7 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                 Medication Name <Text className="text-danger">*</Text>
               </Text>
               <TextInput
-                className="border border-gray-300 rounded-lg p-3 text-base bg-white"
+                className="rounded-lg p-3 text-base bg-gray-50"
                 placeholder="e.g., Aspirin"
                 value={name}
                 onChangeText={setName}
@@ -288,7 +350,7 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                 Dosage <Text className="text-danger">*</Text>
               </Text>
               <TextInput
-                className="border border-gray-300 rounded-lg p-3 text-base bg-white"
+                className="rounded-lg p-3 text-base bg-gray-50"
                 placeholder="e.g., 100mg, 1 tablet"
                 value={dosage}
                 onChangeText={setDosage}
@@ -306,9 +368,13 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                     key={type.value}
                     className={`w-[31%] py-3 px-2 rounded-xl border-2 items-center justify-center ${
                       medicationType === type.value
-                        ? 'bg-primary border-primary'
+                        ? 'bg-gray-50 border-2'
                         : 'bg-gray-50 border-gray-300'
                     }`}
+                    style={{
+                      borderColor: medicationType === type.value ? '#90CDF4' : '#d1d5db',
+                      backgroundColor: medicationType === type.value ? '#F0F9FF' : '#f9fafb',
+                    }}
                     onPress={() => setMedicationType(type.value)}
                     activeOpacity={0.7}
                   >
@@ -316,13 +382,15 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                       {getMedicationIcon(
                         type.value, 
                         20, 
-                        medicationType === type.value ? '#fff' : null
+                        medicationType === type.value ? '#90CDF4' : null
                       )}
                       <Text className={`text-xs font-medium ${
                         medicationType === type.value
-                          ? 'text-white font-semibold'
+                          ? 'font-semibold'
                           : 'text-gray-600'
-                      }`}>
+                      }`}
+                      style={{ color: medicationType === type.value ? '#90CDF4' : '#4b5563' }}
+                      >
                         {type.label}
                       </Text>
                     </View>
@@ -339,7 +407,8 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                 </Text>
                 <TouchableOpacity
                   onPress={handleAddTime}
-                  className="w-9 h-9 rounded-full bg-primary items-center justify-center"
+                  className="w-9 h-9 rounded-full items-center justify-center"
+                  style={{ backgroundColor: '#90CDF4' }}
                 >
                   <Text className="text-white text-xl font-bold">+</Text>
                 </TouchableOpacity>
@@ -352,7 +421,7 @@ const AddFirstMedicationScreen = ({ navigation }) => {
               {timesOfDay.map((time, index) => (
                 <View key={index} className="flex-row items-center mb-3 gap-3">
                   <TouchableOpacity
-                    className="flex-1 border border-gray-300 rounded-lg p-3 bg-gray-50"
+                    className="flex-1 rounded-lg p-3 bg-gray-50"
                     onPress={() => openTimePicker(index)}
                   >
                     <Text className="text-base text-gray-800">
@@ -382,50 +451,68 @@ const AddFirstMedicationScreen = ({ navigation }) => {
               <Text className="text-base font-semibold text-gray-800 mb-2">Schedule Pattern</Text>
               <View className="flex-row gap-2.5 mt-2">
                 <TouchableOpacity
-                  className={`flex-1 py-3 px-4 rounded-lg border items-center ${
+                  className={`flex-1 py-3 px-4 rounded-lg border-2 items-center ${
                     schedulePattern === 'daily'
-                      ? 'bg-primary border-primary'
+                      ? 'bg-gray-50'
                       : 'bg-gray-50 border-gray-300'
                   }`}
+                  style={{
+                    borderColor: schedulePattern === 'daily' ? '#90CDF4' : '#d1d5db',
+                    backgroundColor: schedulePattern === 'daily' ? '#F0F9FF' : '#f9fafb',
+                  }}
                   onPress={() => setSchedulePattern('daily')}
                 >
                   <Text className={`text-sm font-medium ${
                     schedulePattern === 'daily'
-                      ? 'text-white font-semibold'
+                      ? 'font-semibold'
                       : 'text-gray-600'
-                  }`}>
+                  }`}
+                  style={{ color: schedulePattern === 'daily' ? '#90CDF4' : '#4b5563' }}
+                  >
                     Daily
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  className={`flex-1 py-3 px-4 rounded-lg border items-center ${
+                  className={`flex-1 py-3 px-4 rounded-lg border-2 items-center ${
                     schedulePattern === 'weekly'
-                      ? 'bg-primary border-primary'
+                      ? 'bg-gray-50'
                       : 'bg-gray-50 border-gray-300'
                   }`}
+                  style={{
+                    borderColor: schedulePattern === 'weekly' ? '#90CDF4' : '#d1d5db',
+                    backgroundColor: schedulePattern === 'weekly' ? '#F0F9FF' : '#f9fafb',
+                  }}
                   onPress={() => setSchedulePattern('weekly')}
                 >
                   <Text className={`text-sm font-medium ${
                     schedulePattern === 'weekly'
-                      ? 'text-white font-semibold'
+                      ? 'font-semibold'
                       : 'text-gray-600'
-                  }`}>
+                  }`}
+                  style={{ color: schedulePattern === 'weekly' ? '#90CDF4' : '#4b5563' }}
+                  >
                     Weekly
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  className={`flex-1 py-3 px-4 rounded-lg border items-center ${
+                  className={`flex-1 py-3 px-4 rounded-lg border-2 items-center ${
                     schedulePattern === 'alternating'
-                      ? 'bg-primary border-primary'
+                      ? 'bg-gray-50'
                       : 'bg-gray-50 border-gray-300'
                   }`}
+                  style={{
+                    borderColor: schedulePattern === 'alternating' ? '#90CDF4' : '#d1d5db',
+                    backgroundColor: schedulePattern === 'alternating' ? '#F0F9FF' : '#f9fafb',
+                  }}
                   onPress={() => setSchedulePattern('alternating')}
                 >
                   <Text className={`text-sm font-medium ${
                     schedulePattern === 'alternating'
-                      ? 'text-white font-semibold'
+                      ? 'font-semibold'
                       : 'text-gray-600'
-                  }`}>
+                  }`}
+                  style={{ color: schedulePattern === 'alternating' ? '#90CDF4' : '#4b5563' }}
+                  >
                     Alternating
                   </Text>
                 </TouchableOpacity>
@@ -444,9 +531,13 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                           key={day}
                           className={`py-4 px-4 rounded-xl border-2 flex-row items-center justify-between ${
                             isSelected
-                              ? 'bg-blue-50 border-primary'
+                              ? 'bg-gray-50'
                               : 'bg-white border-gray-300'
                           }`}
+                          style={{
+                            borderColor: isSelected ? '#90CDF4' : '#d1d5db',
+                            backgroundColor: isSelected ? '#F0F9FF' : '#ffffff',
+                          }}
                           onPress={() => {
                             if (isSelected) {
                               setSelectedDays(selectedDays.filter(d => d !== dayKey));
@@ -457,13 +548,15 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                         >
                           <Text className={`text-base font-medium flex-1 ${
                             isSelected
-                              ? 'text-primary font-semibold'
+                              ? 'font-semibold'
                               : 'text-gray-800'
-                          }`}>
+                          }`}
+                          style={{ color: isSelected ? '#90CDF4' : '#1f2937' }}
+                          >
                             {day}
                           </Text>
                           {isSelected && (
-                            <Text className="text-xl text-primary font-bold">✓</Text>
+                            <MaterialIcons name="check-circle" size={24} style={{ color: '#90CDF4' }} />
                           )}
                         </TouchableOpacity>
                       );
@@ -478,34 +571,46 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                   <Text className="text-sm font-semibold text-gray-800 mb-2">Alternating Type:</Text>
                   <View className="flex-row gap-2.5">
                     <TouchableOpacity
-                      className={`flex-1 py-3 px-4 rounded-lg border items-center ${
+                      className={`flex-1 py-3 px-4 rounded-lg border-2 items-center ${
                         alternatingType === 'left_right'
-                          ? 'bg-primary border-primary'
+                          ? 'bg-gray-50'
                           : 'bg-gray-50 border-gray-300'
                       }`}
+                      style={{
+                        borderColor: alternatingType === 'left_right' ? '#90CDF4' : '#d1d5db',
+                        backgroundColor: alternatingType === 'left_right' ? '#F0F9FF' : '#f9fafb',
+                      }}
                       onPress={() => setAlternatingType('left_right')}
                     >
                       <Text className={`text-sm font-medium ${
                         alternatingType === 'left_right'
-                          ? 'text-white font-semibold'
+                          ? 'font-semibold'
                           : 'text-gray-600'
-                      }`}>
+                      }`}
+                      style={{ color: alternatingType === 'left_right' ? '#90CDF4' : '#4b5563' }}
+                      >
                         Left/Right
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      className={`flex-1 py-3 px-4 rounded-lg border items-center ${
+                      className={`flex-1 py-3 px-4 rounded-lg border-2 items-center ${
                         alternatingType === 'day_cycle'
-                          ? 'bg-primary border-primary'
+                          ? 'bg-gray-50'
                           : 'bg-gray-50 border-gray-300'
                       }`}
+                      style={{
+                        borderColor: alternatingType === 'day_cycle' ? '#90CDF4' : '#d1d5db',
+                        backgroundColor: alternatingType === 'day_cycle' ? '#F0F9FF' : '#f9fafb',
+                      }}
                       onPress={() => setAlternatingType('day_cycle')}
                     >
                       <Text className={`text-sm font-medium ${
                         alternatingType === 'day_cycle'
-                          ? 'text-white font-semibold'
+                          ? 'font-semibold'
                           : 'text-gray-600'
-                      }`}>
+                      }`}
+                      style={{ color: alternatingType === 'day_cycle' ? '#90CDF4' : '#4b5563' }}
+                      >
                         Day Cycle
                       </Text>
                     </TouchableOpacity>
@@ -516,34 +621,46 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                       <Text className="text-sm font-semibold text-gray-800 mb-2">Start with:</Text>
                       <View className="flex-row gap-2.5">
                         <TouchableOpacity
-                          className={`flex-1 py-3 px-4 rounded-lg border items-center ${
+                          className={`flex-1 py-3 px-4 rounded-lg border-2 items-center ${
                             alternatingCurrent === 'left'
-                              ? 'bg-primary border-primary'
+                              ? 'bg-gray-50'
                               : 'bg-gray-50 border-gray-300'
                           }`}
+                          style={{
+                            borderColor: alternatingCurrent === 'left' ? '#90CDF4' : '#d1d5db',
+                            backgroundColor: alternatingCurrent === 'left' ? '#F0F9FF' : '#f9fafb',
+                          }}
                           onPress={() => setAlternatingCurrent('left')}
                         >
                           <Text className={`text-sm font-medium ${
                             alternatingCurrent === 'left'
-                              ? 'text-white font-semibold'
+                              ? 'font-semibold'
                               : 'text-gray-600'
-                          }`}>
+                          }`}
+                          style={{ color: alternatingCurrent === 'left' ? '#90CDF4' : '#4b5563' }}
+                          >
                             Left
                           </Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                          className={`flex-1 py-3 px-4 rounded-lg border items-center ${
+                          className={`flex-1 py-3 px-4 rounded-lg border-2 items-center ${
                             alternatingCurrent === 'right'
-                              ? 'bg-primary border-primary'
+                              ? 'bg-gray-50'
                               : 'bg-gray-50 border-gray-300'
                           }`}
+                          style={{
+                            borderColor: alternatingCurrent === 'right' ? '#90CDF4' : '#d1d5db',
+                            backgroundColor: alternatingCurrent === 'right' ? '#F0F9FF' : '#f9fafb',
+                          }}
                           onPress={() => setAlternatingCurrent('right')}
                         >
                           <Text className={`text-sm font-medium ${
                             alternatingCurrent === 'right'
-                              ? 'text-white font-semibold'
+                              ? 'font-semibold'
                               : 'text-gray-600'
-                          }`}>
+                          }`}
+                          style={{ color: alternatingCurrent === 'right' ? '#90CDF4' : '#4b5563' }}
+                          >
                             Right
                           </Text>
                         </TouchableOpacity>
@@ -558,7 +675,7 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                         <View className="flex-1">
                           <Text className="text-xs text-gray-600 mb-1">Take for (days):</Text>
                           <TextInput
-                            className="border border-gray-300 rounded-lg p-2 text-base bg-white text-center"
+                            className="rounded-lg p-2 text-base bg-gray-50 text-center"
                             value={alternatingDaysOn}
                             onChangeText={setAlternatingDaysOn}
                             keyboardType="number-pad"
@@ -568,7 +685,7 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                         <View className="flex-1">
                           <Text className="text-xs text-gray-600 mb-1">Skip for (days):</Text>
                           <TextInput
-                            className="border border-gray-300 rounded-lg p-2 text-base bg-white text-center"
+                            className="rounded-lg p-2 text-base bg-gray-50 text-center"
                             value={alternatingDaysOff}
                             onChangeText={setAlternatingDaysOff}
                             keyboardType="number-pad"
@@ -580,34 +697,46 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                         <Text className="text-sm font-semibold text-gray-800 mb-2">Start with:</Text>
                         <View className="flex-row gap-2.5">
                           <TouchableOpacity
-                            className={`flex-1 py-3 px-4 rounded-lg border items-center ${
+                            className={`flex-1 py-3 px-4 rounded-lg border-2 items-center ${
                               alternatingCurrent === 'day1'
-                                ? 'bg-primary border-primary'
+                                ? 'bg-gray-50'
                                 : 'bg-gray-50 border-gray-300'
                             }`}
+                            style={{
+                              borderColor: alternatingCurrent === 'day1' ? '#90CDF4' : '#d1d5db',
+                              backgroundColor: alternatingCurrent === 'day1' ? '#F0F9FF' : '#f9fafb',
+                            }}
                             onPress={() => setAlternatingCurrent('day1')}
                           >
                             <Text className={`text-sm font-medium ${
                               alternatingCurrent === 'day1'
-                                ? 'text-white font-semibold'
+                                ? 'font-semibold'
                                 : 'text-gray-600'
-                            }`}>
+                            }`}
+                            style={{ color: alternatingCurrent === 'day1' ? '#90CDF4' : '#4b5563' }}
+                            >
                               Day 1 (Take)
                             </Text>
                           </TouchableOpacity>
                           <TouchableOpacity
-                            className={`flex-1 py-3 px-4 rounded-lg border items-center ${
+                            className={`flex-1 py-3 px-4 rounded-lg border-2 items-center ${
                               alternatingCurrent === 'day2'
-                                ? 'bg-primary border-primary'
+                                ? 'bg-gray-50'
                                 : 'bg-gray-50 border-gray-300'
                             }`}
+                            style={{
+                              borderColor: alternatingCurrent === 'day2' ? '#90CDF4' : '#d1d5db',
+                              backgroundColor: alternatingCurrent === 'day2' ? '#F0F9FF' : '#f9fafb',
+                            }}
                             onPress={() => setAlternatingCurrent('day2')}
                           >
                             <Text className={`text-sm font-medium ${
                               alternatingCurrent === 'day2'
-                                ? 'text-white font-semibold'
+                                ? 'font-semibold'
                                 : 'text-gray-600'
-                            }`}>
+                            }`}
+                            style={{ color: alternatingCurrent === 'day2' ? '#90CDF4' : '#4b5563' }}
+                            >
                               Day 2 (Skip)
                             </Text>
                           </TouchableOpacity>
@@ -625,7 +754,7 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                 Start Date <Text className="text-danger">*</Text>
               </Text>
               <TouchableOpacity
-                className="border border-gray-300 rounded-lg p-3 bg-gray-50"
+                className="rounded-lg p-3 bg-gray-50"
                 onPress={() => setShowStartDatePicker(true)}
               >
                 <Text className="text-base text-gray-800">
@@ -659,7 +788,7 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                 <Switch
                   value={isContinuous}
                   onValueChange={setIsContinuous}
-                  trackColor={{ false: '#767577', true: '#4285F4' }}
+                  trackColor={{ false: '#767577', true: '#90CDF4' }}
                   thumbColor={isContinuous ? '#fff' : '#f4f3f4'}
                 />
               </View>
@@ -667,7 +796,7 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                 <View className="mt-4">
                   <Text className="text-base font-semibold text-gray-800 mb-2">End Date</Text>
                   <TouchableOpacity
-                    className="border border-gray-300 rounded-lg p-3 bg-gray-50"
+                    className="rounded-lg p-3 bg-gray-50"
                     onPress={() => setShowEndDatePicker(true)}
                   >
                     <Text className="text-base text-gray-800">
@@ -697,7 +826,7 @@ const AddFirstMedicationScreen = ({ navigation }) => {
             <View className="mb-6">
               <Text className="text-base font-semibold text-gray-800 mb-2">Food Instructions</Text>
               <TextInput
-                className="border border-gray-300 rounded-lg p-3 text-base bg-white h-20"
+                className="rounded-lg p-3 text-base bg-gray-50 h-20"
                 style={{ textAlignVertical: 'top' }}
                 placeholder="e.g., Take with food, Take on empty stomach"
                 value={foodInstructions}
@@ -711,7 +840,7 @@ const AddFirstMedicationScreen = ({ navigation }) => {
             <View className="mb-6">
               <Text className="text-base font-semibold text-gray-800 mb-2">Reason for Treatment</Text>
               <TextInput
-                className="border border-gray-300 rounded-lg p-3 text-base bg-white h-20"
+                className="rounded-lg p-3 text-base bg-gray-50 h-20"
                 style={{ textAlignVertical: 'top' }}
                 placeholder="Why are you taking this medication? (e.g., High blood pressure, Diabetes)"
                 value={reasonForTreatment}
@@ -725,7 +854,7 @@ const AddFirstMedicationScreen = ({ navigation }) => {
             <View className="mb-6">
               <Text className="text-base font-semibold text-gray-800 mb-2">Notes</Text>
               <TextInput
-                className="border border-gray-300 rounded-lg p-3 text-base bg-white h-20"
+                className="rounded-lg p-3 text-base bg-gray-50 h-20"
                 style={{ textAlignVertical: 'top' }}
                 placeholder="Additional notes about this medication"
                 value={notes}
@@ -744,7 +873,7 @@ const AddFirstMedicationScreen = ({ navigation }) => {
             >
               <Text className="text-base font-semibold text-gray-800 mb-2">Quantity Remaining</Text>
               <TextInput
-                className="border border-gray-300 rounded-lg p-3 text-base bg-white"
+                className="rounded-lg p-3 text-base bg-gray-50"
                 placeholder="e.g., 30 tablets"
                 value={quantityRemaining}
                 onChangeText={setQuantityRemaining}
@@ -768,7 +897,7 @@ const AddFirstMedicationScreen = ({ navigation }) => {
             >
               <Text className="text-base font-semibold text-gray-800 mb-2">Low Stock Alert (days)</Text>
               <TextInput
-                className="border border-gray-300 rounded-lg p-3 text-base bg-white"
+                className="rounded-lg p-3 text-base bg-gray-50"
                 placeholder="7"
                 value={lowStockThreshold}
                 onChangeText={setLowStockThreshold}
@@ -790,8 +919,11 @@ const AddFirstMedicationScreen = ({ navigation }) => {
       <View className="p-6 border-t border-gray-300">
         <TouchableOpacity
           className={`py-4 rounded-xl items-center ${
-            canContinue ? 'bg-primary' : 'bg-gray-400'
+            canContinue ? '' : 'bg-gray-400'
           }`}
+          style={{
+            backgroundColor: canContinue ? '#90CDF4' : '#9ca3af',
+          }}
           onPress={handleSave}
           disabled={!canContinue}
           activeOpacity={0.8}

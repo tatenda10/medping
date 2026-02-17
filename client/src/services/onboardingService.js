@@ -114,12 +114,10 @@ class OnboardingService {
           delete medicationData.server_synced;
           delete medicationData.deleted;
 
-          await axios.post(
-            `${BASE_URL}/medications`,
-            medicationData,
-            {
-              headers: { 'Authorization': `Bearer ${authToken}` },
-            }
+          const { clerkAxios } = await import('../utils/clerkAxios');
+          await clerkAxios.post(
+            `/medications`,
+            medicationData
           );
         } catch (error) {
           console.log('Medication sync failed, will retry later:', error);
@@ -151,13 +149,11 @@ class OnboardingService {
       // 5. Save questionnaire answers to user profile on server (if server supports it)
       if (questionnaireAnswers) {
         try {
-          await axios.post(
-            `${BASE_URL}/user/profile`,
+          const { clerkAxios } = await import('../utils/clerkAxios');
+          await clerkAxios.post(
+            `/user/profile`,
             {
               onboarding_questionnaire: questionnaireAnswers,
-            },
-            {
-              headers: { 'Authorization': `Bearer ${authToken}` },
             }
           );
         } catch (error) {

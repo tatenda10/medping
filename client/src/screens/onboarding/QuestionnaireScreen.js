@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  StyleSheet,
   TouchableOpacity,
   ScrollView,
 } from 'react-native';
@@ -198,7 +197,6 @@ const QuestionnaireScreen = ({ navigation }) => {
     }
   };
 
-
   // Initialize selected options for current question
   useEffect(() => {
     if (currentQ.type === 'multi') {
@@ -209,50 +207,64 @@ const QuestionnaireScreen = ({ navigation }) => {
   }, [currentQuestion]);
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-          <MaterialIcons name="arrow-back" size={24} color="#4285F4" />
+    <SafeAreaView className="flex-1 bg-white" edges={['top', 'bottom']}>
+      {/* Header */}
+      <View className="flex-row items-start justify-between px-5 pt-4 pb-4 border-b border-gray-200">
+        <TouchableOpacity onPress={handleBack} className="w-10 h-10 justify-center items-center">
+          <MaterialIcons name="arrow-back" size={24} style={{ color: '#90CDF4' }} />
         </TouchableOpacity>
-        <View style={styles.progressContainer}>
-          <View style={styles.progressBar}>
-            <View style={[styles.progressFill, { width: `${progress}%` }]} />
+        <View className="flex-1 mx-4">
+          <View className="h-1 bg-gray-200 rounded-full overflow-hidden mb-1">
+            <View 
+              className="h-full rounded-full"
+              style={{ 
+                width: `${progress}%`,
+                backgroundColor: '#90CDF4'
+              }}
+            />
           </View>
-          <Text style={styles.progressText}>
+          <Text className="text-xs text-gray-600 text-center">
             {currentQuestion + 1} of {totalQuestions}
           </Text>
         </View>
-        <View style={styles.skipButtonPlaceholder} />
+        <View className="w-10" />
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.questionContainer}>
-          <Text style={styles.category}>{currentQ.category}</Text>
-          <Text style={styles.question}>{currentQ.question}</Text>
+      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+        <View className="p-6">
+          <Text className="text-sm font-semibold mb-2 uppercase" style={{ color: '#90CDF4' }}>
+            {currentQ.category}
+          </Text>
+          <Text className="text-2xl font-bold text-gray-900 mb-8 leading-8">
+            {currentQ.question}
+          </Text>
 
-          <View style={styles.optionsContainer}>
+          <View className="gap-3">
             {currentQ.options.map((option, index) => {
               const isSelected = selectedOptions.includes(option);
               return (
                 <TouchableOpacity
                   key={index}
-                  style={[
-                    styles.optionButton,
-                    isSelected && styles.optionButtonSelected,
-                  ]}
+                  className={`flex-row items-center justify-between p-4 rounded-xl border-2 ${
+                    isSelected ? 'bg-gray-50' : 'bg-white'
+                  }`}
+                  style={{
+                    borderColor: isSelected ? '#90CDF4' : '#e5e7eb',
+                    backgroundColor: isSelected ? '#F0F9FF' : '#ffffff',
+                  }}
                   onPress={() => handleOptionSelect(option)}
                   activeOpacity={0.7}
                 >
                   <Text
-                    style={[
-                      styles.optionText,
-                      isSelected && styles.optionTextSelected,
-                    ]}
+                    className={`text-base flex-1 ${
+                      isSelected ? 'font-semibold' : 'font-normal'
+                    }`}
+                    style={{ color: isSelected ? '#90CDF4' : '#374151' }}
                   >
                     {option}
                   </Text>
                   {isSelected && (
-                    <Text style={styles.checkmark}>✓</Text>
+                    <MaterialIcons name="check-circle" size={24} style={{ color: '#90CDF4' }} />
                   )}
                 </TouchableOpacity>
               );
@@ -261,17 +273,20 @@ const QuestionnaireScreen = ({ navigation }) => {
         </View>
       </ScrollView>
 
-      <View style={styles.footer}>
+      {/* Footer */}
+      <View className="p-5 border-t border-gray-200">
         <TouchableOpacity
-          style={[
-            styles.nextButton,
-            currentQ.type === 'single' && !answers[currentQ.id] && styles.nextButtonDisabled,
-          ]}
+          className={`py-4 rounded-xl items-center ${
+            currentQ.type === 'single' && !answers[currentQ.id] ? 'bg-gray-300' : ''
+          }`}
+          style={{
+            backgroundColor: currentQ.type === 'single' && !answers[currentQ.id] ? '#d1d5db' : '#90CDF4',
+          }}
           onPress={handleNext}
           disabled={currentQ.type === 'single' && !answers[currentQ.id]}
           activeOpacity={0.8}
         >
-          <Text style={styles.nextButtonText}>
+          <Text className="text-white text-lg font-semibold">
             {currentQuestion === totalQuestions - 1 ? 'Continue' : 'Next'}
           </Text>
         </TouchableOpacity>
@@ -280,123 +295,4 @@ const QuestionnaireScreen = ({ navigation }) => {
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 0, // Align icon center with progress bar center (progress bar is 4px, icon is 24px)
-  },
-  progressContainer: {
-    flex: 1,
-    marginHorizontal: 16,
-  },
-  progressBar: {
-    height: 4,
-    backgroundColor: '#e0e0e0',
-    borderRadius: 2,
-    overflow: 'hidden',
-    marginBottom: 4,
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#4285F4',
-    borderRadius: 2,
-  },
-  progressText: {
-    fontSize: 12,
-    color: '#666',
-    textAlign: 'center',
-  },
-  skipButtonPlaceholder: {
-    width: 40, // Same width as back button to maintain balance
-  },
-  content: {
-    flex: 1,
-  },
-  questionContainer: {
-    padding: 24,
-  },
-  category: {
-    fontSize: 14,
-    color: '#4285F4',
-    fontWeight: '600',
-    marginBottom: 8,
-    textTransform: 'uppercase',
-  },
-  question: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 32,
-    lineHeight: 32,
-  },
-  optionsContainer: {
-    gap: 12,
-  },
-  optionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#e0e0e0',
-    backgroundColor: '#f9f9f9',
-  },
-  optionButtonSelected: {
-    borderColor: '#4285F4',
-    backgroundColor: '#E3F2FD',
-  },
-  optionText: {
-    fontSize: 16,
-    color: '#333',
-    flex: 1,
-  },
-  optionTextSelected: {
-    color: '#4285F4',
-    fontWeight: '600',
-  },
-  checkmark: {
-    fontSize: 20,
-    color: '#4285F4',
-    marginLeft: 8,
-  },
-  footer: {
-    padding: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
-  },
-  nextButton: {
-    backgroundColor: '#4285F4',
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  nextButtonDisabled: {
-    backgroundColor: '#ccc',
-  },
-  nextButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-});
-
 export default QuestionnaireScreen;
-

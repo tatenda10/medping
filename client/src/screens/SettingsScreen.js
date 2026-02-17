@@ -1,35 +1,37 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
 import BASE_URL from '../context/Api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import AppHeader from '../components/AppHeader';
 import databaseService from '../services/databaseService';
 import exportService from '../services/exportService';
 import CreateAccountPrompt from '../components/CreateAccountPrompt';
 import clearAllData from '../utils/clearAllData';
+import { useAuthCheck } from '../hooks/useAuthCheck';
 
 const SettingsScreen = ({ navigation, onLogout }) => {
+  const { isAuthenticated } = useAuthCheck();
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [clearing, setClearing] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [showCreateAccountPrompt, setShowCreateAccountPrompt] = useState(false);
   const [promptMessage, setPromptMessage] = useState('');
+  const [userData, setUserData] = useState(null);
 
   useEffect(() => {
-    checkAuthStatus();
+    loadUserData();
   }, []);
 
-  const checkAuthStatus = async () => {
+  const loadUserData = async () => {
     try {
-      const token = await AsyncStorage.getItem('authToken');
-      setIsAuthenticated(!!token);
+      const stored = await AsyncStorage.getItem('userData');
+      if (stored) {
+        setUserData(JSON.parse(stored));
+      }
     } catch (error) {
-      console.error('Error checking auth status:', error);
-      setIsAuthenticated(false);
+      console.error('Error loading user data:', error);
     }
   };
 
@@ -45,7 +47,7 @@ const SettingsScreen = ({ navigation, onLogout }) => {
   const handleDeleteAccount = () => {
     Alert.alert(
       'Delete Account',
-      'Are you sure you want to delete your account? This action cannot be undone and will permanently delete:\n\n• All your medications\n• All your dose logs\n• All your health data\n• All caregiver relationships\n• All other associated data',
+      'Are you sure you want to delete your account? This action cannot be undone and will permanently delete all your data.',
       [
         {
           text: 'Cancel',
@@ -54,24 +56,7 @@ const SettingsScreen = ({ navigation, onLogout }) => {
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () => {
-            // Second confirmation
-            Alert.alert(
-              'Final Confirmation',
-              'This will permanently delete your account and all data. Type "DELETE" to confirm.',
-              [
-                {
-                  text: 'Cancel',
-                  style: 'cancel',
-                },
-                {
-                  text: 'Confirm Delete',
-                  style: 'destructive',
-                  onPress: confirmDeleteAccount,
-                },
-              ]
-            );
-          },
+          onPress: confirmDeleteAccount,
         },
       ]
     );
@@ -88,7 +73,6 @@ const SettingsScreen = ({ navigation, onLogout }) => {
         return;
       }
 
-      // Call backend to delete account
       const response = await axios.delete(`${BASE_URL}/user/account`, {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -96,17 +80,14 @@ const SettingsScreen = ({ navigation, onLogout }) => {
       });
 
       if (response.data.success) {
-        // Get user ID before clearing AsyncStorage
         const userData = await AsyncStorage.getItem('userData');
         const user = userData ? JSON.parse(userData) : null;
         const userId = user?.id || user?.user?.id;
 
-        // Clear local database first (before clearing AsyncStorage)
         try {
           await databaseService.ensureInitialized();
           
           if (userId && databaseService.db) {
-            // Delete all local data for this user
             await databaseService.db.runAsync('DELETE FROM medications WHERE user_id = ?', [userId]);
             await databaseService.db.runAsync('DELETE FROM dose_logs WHERE user_id = ?', [userId]);
             await databaseService.db.runAsync('DELETE FROM refills WHERE user_id = ?', [userId]);
@@ -115,23 +96,15 @@ const SettingsScreen = ({ navigation, onLogout }) => {
             await databaseService.db.runAsync('DELETE FROM appointments WHERE user_id = ?', [userId]);
             await databaseService.db.runAsync('DELETE FROM questionnaire_answers WHERE user_id = ?', [userId]);
             await databaseService.db.runAsync('DELETE FROM sync_queue');
-            console.log('✅ Local database cleared');
           }
         } catch (dbError) {
-          console.warn('⚠️ Could not clear local database:', dbError);
-          // Continue anyway - database will be recreated
+          console.warn('Could not clear local database:', dbError);
         }
 
-        // Clear AsyncStorage
         try {
-          await AsyncStorage.multiRemove([
-            'authToken',
-            'userData',
-          ]);
-          console.log('✅ AsyncStorage cleared');
+          await AsyncStorage.multiRemove(['authToken', 'userData']);
         } catch (storageError) {
-          console.warn('⚠️ Could not clear AsyncStorage:', storageError);
-          // Continue anyway
+          console.warn('Could not clear AsyncStorage:', storageError);
         }
 
         Alert.alert(
@@ -141,11 +114,9 @@ const SettingsScreen = ({ navigation, onLogout }) => {
             {
               text: 'OK',
               onPress: () => {
-                // Navigate to login/logout
                 if (onLogout) {
                   onLogout();
                 } else {
-                  // Fallback: navigate to login
                   navigation.reset({
                     index: 0,
                     routes: [{ name: 'Login' }],
@@ -176,7 +147,7 @@ const SettingsScreen = ({ navigation, onLogout }) => {
       await exportService.exportAllData();
       Alert.alert(
         'Export Complete',
-        'Your data has been exported successfully. The file is ready to share.',
+        'Your data has been exported successfully.',
         [{ text: 'OK' }]
       );
     } catch (error) {
@@ -191,36 +162,21 @@ const SettingsScreen = ({ navigation, onLogout }) => {
     }
   };
 
-  const handleClearAllData = () => {
+  const handleLogout = () => {
     Alert.alert(
-      'Clear All Local Data',
-      'This will permanently delete all local data from this device:\n\n• All medications\n• All dose logs\n• All health data\n• All appointments\n• All sync queue data\n• Authentication tokens\n• Onboarding data\n\nThis action cannot be undone. Your data on the server will NOT be affected.\n\nContinue?',
+      'Log Out',
+      'Are you sure you want to log out?',
       [
         {
           text: 'Cancel',
           style: 'cancel',
         },
         {
-          text: 'Clear All Data',
+          text: 'Log Out',
           style: 'destructive',
-          onPress: async () => {
-            setClearing(true);
-            try {
-              await clearAllData(true);
-              // Navigate to login after clearing
-              if (onLogout) {
-                onLogout();
-              } else {
-                navigation.reset({
-                  index: 0,
-                  routes: [{ name: 'Login' }],
-                });
-              }
-            } catch (error) {
-              console.error('Error clearing data:', error);
-              // Error alert is shown by clearAllData
-            } finally {
-              setClearing(false);
+          onPress: () => {
+            if (onLogout) {
+              onLogout();
             }
           },
         },
@@ -228,226 +184,211 @@ const SettingsScreen = ({ navigation, onLogout }) => {
     );
   };
 
+  const getAppVersion = () => {
+    // Version info - can be updated from app.json
+    return 'VERSION 2.4.1 (BUILD 108)';
+  };
+
   return (
-    <View style={styles.container}>
-      <AppHeader navigation={navigation} />
-      <ScrollView 
-        style={styles.scrollView}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        <Text style={styles.title}>Settings</Text>
-        
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Caregiver Access</Text>
-          <Text style={styles.sectionDescription}>
-            Invite people to view your medication schedule or manage existing invitations.
-          </Text>
+    <SafeAreaView className="flex-1 bg-white" edges={['top', 'bottom']}>
+      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+        {/* Header */}
+        <View className="flex-row items-center px-5 pt-4 pb-3">
+          <TouchableOpacity 
+            className="w-10 h-10 rounded-full bg-gray-100 justify-center items-center mr-3"
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="chevron-back" size={24} color="#333" />
+          </TouchableOpacity>
+          <Text className="text-2xl font-bold text-gray-900 flex-1">Settings</Text>
+        </View>
+
+        {/* User Profile Card */}
+        {userData && (
+          <TouchableOpacity
+            className="mx-5 mb-6 bg-white rounded-xl p-4 flex-row items-center"
+            onPress={() => requireAuth(
+              () => navigation.navigate('Profile'),
+              'Create an account to view your profile.'
+            )}
+            activeOpacity={0.7}
+          >
+            <View className="w-16 h-16 rounded-full justify-center items-center mr-4" style={{ backgroundColor: '#90CDF4' }}>
+              <MaterialIcons name="account-circle" size={40} color="white" />
+            </View>
+            <View className="flex-1">
+              <Text className="text-lg font-bold text-gray-900">{userData.name || 'User'}</Text>
+              <Text className="text-sm text-gray-600 mt-1">{userData.email || ''}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#999" />
+          </TouchableOpacity>
+        )}
+
+        {/* ACCOUNT & SECURITY Section */}
+        <View className="px-5 mb-6">
+          <Text className="text-xs text-gray-600 mb-4 uppercase tracking-wide">Account & Security</Text>
           
           <TouchableOpacity
-            style={styles.settingItem}
+            className="bg-white rounded-xl p-4 mb-3 flex-row items-center"
+            onPress={() => Alert.alert('Coming Soon', 'Notification preferences will be available soon.')}
+            activeOpacity={0.7}
+          >
+            <View className="w-10 h-10 rounded-lg justify-center items-center mr-3" style={{ backgroundColor: '#E0F2FE' }}>
+              <MaterialIcons name="notifications-none" size={20} color="#90CDF4" />
+            </View>
+            <Text className="text-base text-gray-900 flex-1">Notification Preferences</Text>
+            <Ionicons name="chevron-forward" size={20} color="#999" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            className="bg-white rounded-xl p-4 mb-3 flex-row items-center"
+            onPress={() => Alert.alert('Coming Soon', 'Privacy & Security settings will be available soon.')}
+            activeOpacity={0.7}
+          >
+            <View className="w-10 h-10 rounded-lg justify-center items-center mr-3" style={{ backgroundColor: '#E0F2FE' }}>
+              <MaterialIcons name="lock" size={20} color="#90CDF4" />
+            </View>
+            <Text className="text-base text-gray-900 flex-1">Privacy & Security</Text>
+            <Ionicons name="chevron-forward" size={20} color="#999" />
+          </TouchableOpacity>
+        </View>
+
+        {/* MEDICATION Section */}
+        <View className="px-5 mb-6">
+          <Text className="text-xs text-gray-600 mb-4 uppercase tracking-wide">Medication</Text>
+          
+          <TouchableOpacity
+            className="bg-white rounded-xl p-4 mb-3 flex-row items-center"
+            onPress={() => navigation.navigate('AddMedicine')}
+            activeOpacity={0.7}
+          >
+            <View className="w-10 h-10 rounded-lg justify-center items-center mr-3" style={{ backgroundColor: '#E0F2FE' }}>
+              <MaterialIcons name="medication" size={20} color="#90CDF4" />
+            </View>
+            <View className="flex-1">
+              <Text className="text-base text-gray-900">Manage Medications</Text>
+              <Text className="text-sm text-gray-600 mt-1">View and manage your medications</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#999" />
+          </TouchableOpacity>
+        </View>
+
+        {/* CAREGIVER ACCESS Section */}
+        <View className="px-5 mb-6">
+          <Text className="text-xs text-gray-600 mb-4 uppercase tracking-wide">Caregiver Access</Text>
+          
+          <TouchableOpacity
+            className="bg-white rounded-xl p-4 mb-3 flex-row items-center"
             onPress={() => requireAuth(
               () => navigation.navigate('InviteCaregiver'),
               'Create an account to invite caregivers and share your medication schedule.'
             )}
+            activeOpacity={0.7}
           >
-            <View style={styles.settingLeft}>
-              <MaterialIcons name="people" size={24} color="#4285F4" style={styles.settingIconMaterial} />
-              <View>
-                <Text style={styles.settingTitle}>Invite Caregiver</Text>
-                <Text style={styles.settingSubtitle}>Share your schedule with others</Text>
-              </View>
+            <View className="w-10 h-10 rounded-lg justify-center items-center mr-3" style={{ backgroundColor: '#E0F2FE' }}>
+              <MaterialIcons name="people" size={20} color="#90CDF4" />
             </View>
-            <MaterialIcons name="chevron-right" size={24} color="#999" />
+            <View className="flex-1">
+              <Text className="text-base text-gray-900">Invite Caregiver</Text>
+              <Text className="text-sm text-gray-600 mt-1">Share your schedule with others</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#999" />
           </TouchableOpacity>
-          
+
           <TouchableOpacity
-            style={styles.settingItem}
+            className="bg-white rounded-xl p-4 mb-3 flex-row items-center"
             onPress={() => requireAuth(
               () => navigation.navigate('CaregiverInvitations'),
               'Create an account to manage caregiver invitations.'
             )}
+            activeOpacity={0.7}
           >
-            <View style={styles.settingLeft}>
-              <MaterialIcons name="list-alt" size={24} color="#4285F4" style={styles.settingIconMaterial} />
-              <View>
-                <Text style={styles.settingTitle}>Manage Invitations</Text>
-                <Text style={styles.settingSubtitle}>View and manage invitations</Text>
-              </View>
+            <View className="w-10 h-10 rounded-lg justify-center items-center mr-3" style={{ backgroundColor: '#E0F2FE' }}>
+              <MaterialIcons name="list-alt" size={20} color="#90CDF4" />
             </View>
-            <MaterialIcons name="chevron-right" size={24} color="#999" />
+            <View className="flex-1">
+              <Text className="text-base text-gray-900">Manage Invitations</Text>
+              <Text className="text-sm text-gray-600 mt-1">View and manage invitations</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#999" />
           </TouchableOpacity>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Data & Export</Text>
-          <Text style={styles.sectionDescription}>
-            Export your medication data or manage your account.
-          </Text>
+        {/* SUPPORT Section */}
+        <View className="px-5 mb-6">
+          <Text className="text-xs text-gray-600 mb-4 uppercase tracking-wide">Support</Text>
           
           <TouchableOpacity
-            style={styles.settingItem}
-            onPress={() => requireAuth(
-              handleExportData,
-              'Create an account to export your data and sync across devices.'
-            )}
-            disabled={exporting}
+            className="bg-white rounded-xl p-4 mb-3 flex-row items-center"
+            onPress={() => Alert.alert('Help & Support', 'For support, please contact us at support@mediping.app')}
+            activeOpacity={0.7}
           >
-            <View style={styles.settingLeft}>
-              <MaterialIcons name="file-download" size={24} color="#4285F4" style={styles.settingIconMaterial} />
-              <View>
-                <Text style={styles.settingTitle}>
-                  {exporting ? 'Exporting Data...' : 'Export Data'}
-                </Text>
-                <Text style={styles.settingSubtitle}>
-                  Download all your data as CSV files
-                </Text>
-              </View>
+            <View className="w-10 h-10 rounded-lg justify-center items-center mr-3" style={{ backgroundColor: '#E0F2FE' }}>
+              <MaterialIcons name="help-outline" size={20} color="#90CDF4" />
             </View>
-            {!exporting && <MaterialIcons name="chevron-right" size={24} color="#999" />}
+            <Text className="text-base text-gray-900 flex-1">Help & Support</Text>
+            <Ionicons name="chevron-forward" size={20} color="#999" />
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.settingItem, styles.warningItem]}
-            onPress={handleClearAllData}
-            disabled={clearing}
+            className="bg-white rounded-xl p-4 mb-3 flex-row items-center"
+            onPress={() => Alert.alert('About MediPing', 'MediPing - Your Smart Medication Reminder & Health Tracker')}
+            activeOpacity={0.7}
           >
-            <View style={styles.settingLeft}>
-              <MaterialIcons name="delete-sweep" size={24} color="#FF9800" style={styles.settingIconMaterial} />
-              <View>
-                <Text style={[styles.settingTitle, styles.warningText]}>
-                  {clearing ? 'Clearing Data...' : 'Clear All Local Data'}
-                </Text>
-                <Text style={styles.settingSubtitle}>
-                  Delete all local data from this device only
-                </Text>
-              </View>
+            <View className="w-10 h-10 rounded-lg justify-center items-center mr-3" style={{ backgroundColor: '#E0F2FE' }}>
+              <MaterialIcons name="info-outline" size={20} color="#90CDF4" />
             </View>
-            {!clearing && <MaterialIcons name="chevron-right" size={24} color="#999" />}
+            <Text className="text-base text-gray-900 flex-1">About MediPing</Text>
+            <Ionicons name="chevron-forward" size={20} color="#999" />
           </TouchableOpacity>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account</Text>
-          <Text style={styles.sectionDescription}>
-            Manage your account settings and data.
-          </Text>
-          
-          <TouchableOpacity
-            style={[styles.settingItem, styles.dangerItem]}
-            onPress={() => requireAuth(
-              handleDeleteAccount,
-              'You need an account to delete it. Create an account first.'
-            )}
-            disabled={deleting}
-          >
-            <View style={styles.settingLeft}>
-              <MaterialIcons name="delete-forever" size={24} color="#E53935" style={styles.settingIconMaterial} />
-              <View>
-                <Text style={[styles.settingTitle, styles.dangerText]}>
-                  {deleting ? 'Deleting Account...' : 'Delete Account'}
-                </Text>
-                <Text style={styles.settingSubtitle}>
-                  Permanently delete your account and all data
-                </Text>
+        {/* Delete Account Button */}
+        {isAuthenticated && (
+          <View className="px-5 mb-4">
+            <TouchableOpacity
+              className="bg-white rounded-xl p-4 flex-row items-center"
+              onPress={handleDeleteAccount}
+              disabled={deleting}
+              activeOpacity={0.7}
+            >
+              <View className="w-10 h-10 rounded-lg justify-center items-center mr-3" style={{ backgroundColor: '#FFEBEE' }}>
+                <MaterialIcons name="delete-forever" size={20} color="#E53935" />
               </View>
-            </View>
-            {!deleting && <MaterialIcons name="chevron-right" size={24} color="#999" />}
+              <Text className="text-base text-red-600 flex-1 font-semibold">
+                {deleting ? 'Deleting Account...' : 'Delete Account'}
+              </Text>
+              <Ionicons name="chevron-forward" size={20} color="#999" />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Log Out Button */}
+        {isAuthenticated && (
+          <TouchableOpacity
+            className="mx-5 mb-6 rounded-xl p-4 flex-row items-center justify-center"
+            style={{ backgroundColor: '#FFEBEE' }}
+            onPress={handleLogout}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="logout" size={20} color="#E53935" />
+            <Text className="text-base font-bold text-red-600 ml-2">Log Out</Text>
           </TouchableOpacity>
+        )}
+
+        {/* Version */}
+        <View className="px-5 pb-8 items-center">
+          <Text className="text-xs text-gray-400">{getAppVersion()}</Text>
         </View>
       </ScrollView>
 
-      {/* Create Account Prompt Modal */}
       <CreateAccountPrompt
         visible={showCreateAccountPrompt}
         onClose={() => setShowCreateAccountPrompt(false)}
         message={promptMessage}
       />
-    </View>
+    </SafeAreaView>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  content: {
-    flexGrow: 1,
-    padding: 20,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 30,
-    color: '#333',
-  },
-  section: {
-    marginBottom: 30,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  sectionDescription: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 20,
-    lineHeight: 20,
-  },
-  settingItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 15,
-    backgroundColor: '#f9f9f9',
-    borderRadius: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-  },
-  settingLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  settingIcon: {
-    fontSize: 24,
-    marginRight: 15,
-  },
-  settingIconMaterial: {
-    marginRight: 15,
-  },
-  settingTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 4,
-  },
-  settingSubtitle: {
-    fontSize: 12,
-    color: '#666',
-  },
-  dangerItem: {
-    borderColor: '#FFEBEE',
-    backgroundColor: '#FFF5F5',
-  },
-  dangerText: {
-    color: '#E53935',
-  },
-  warningItem: {
-    borderColor: '#FFF3E0',
-    backgroundColor: '#FFF8E1',
-  },
-  warningText: {
-    color: '#FF9800',
-  },
-});
-
 export default SettingsScreen;
-

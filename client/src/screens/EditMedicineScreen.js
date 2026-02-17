@@ -4,7 +4,6 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
   Alert,
   ActivityIndicator,
   ScrollView,
@@ -15,18 +14,17 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as ImagePicker from 'expo-image-picker';
-import axios from 'axios';
-import BASE_URL from '../context/Api';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import AppHeader from '../components/AppHeader';
-import BottomTabBar from '../components/BottomTabBar';
+import { clerkAxios } from '../utils/clerkAxios';
+import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import notificationService from '../services/notificationService';
-import { MEDICATION_TYPES } from '../utils/medicationIcons';
-import { useAuthCheck } from '../hooks/useAuthCheck';
+import databaseService from '../services/databaseService';
+import syncService from '../services/syncService';
+import { MEDICATION_TYPES, getMedicationIcon } from '../utils/medicationIcons';
+import { useAuth } from '../context/ClerkAuthContext';
 import CreateAccountPrompt from '../components/CreateAccountPrompt';
 
 const EditMedicineScreen = ({ route, navigation }) => {
-  const { isAuthenticated } = useAuthCheck();
+  const { userId, isAuthenticated } = useAuth();
   const [showCreateAccountPrompt, setShowCreateAccountPrompt] = useState(false);
   const { medicationId, medication: initialMedication } = route.params;
   const [loading, setLoading] = useState(false);
@@ -154,7 +152,7 @@ const EditMedicineScreen = ({ route, navigation }) => {
 
     setLoading(true);
     try {
-      const token = await AsyncStorage.getItem('authToken');
+      const currentUserId = userId || 'guest';
       
       // Format times for API
       const formattedTimes = timesOfDay.map(time => formatTime(time));
@@ -170,6 +168,8 @@ const EditMedicineScreen = ({ route, navigation }) => {
       }
 
       const medicationData = {
+        id: medicationId,
+        user_id: currentUserId,
         name: name.trim(),
         dosage: dosage.trim(),
         medication_type: medicationType,
@@ -186,24 +186,44 @@ const EditMedicineScreen = ({ route, navigation }) => {
         low_stock_threshold: lowStockThreshold ? parseInt(lowStockThreshold) : 7,
       };
 
-      const response = await axios.put(
-        `${BASE_URL}/medications/${medicationId}`,
-        medicationData,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
+      // Update local database first
+      if (Platform.OS !== 'web') {
+        try {
+          await databaseService.saveMedication(medicationData, false);
+        } catch (dbError) {
+          console.warn('⚠️ Failed to update local database:', dbError.message);
         }
-      );
-
-      if (response.data.success) {
-        Alert.alert('Success', 'Medication updated successfully', [
-          {
-            text: 'OK',
-            onPress: () => navigation.goBack(),
-          },
-        ]);
       }
+
+      // Reschedule notifications
+      try {
+        await notificationService.scheduleMedicationNotifications(medicationData);
+      } catch (notifError) {
+        console.error('⚠️ Error rescheduling notifications:', notifError);
+      }
+
+      // Try to sync to server (if online and authenticated)
+      const online = await syncService.isOnline();
+      if (online && isAuthenticated) {
+        try {
+          const response = await clerkAxios.put(`/medications/${medicationId}`, medicationData);
+          if (response.data.success) {
+            if (Platform.OS !== 'web') {
+              await databaseService.saveMedication(response.data.medication, false);
+              await databaseService.markMedicationSynced(medicationId);
+            }
+          }
+        } catch (error) {
+          console.log('📴 Offline or server error - saved locally, will sync later');
+        }
+      }
+
+      Alert.alert('Success', 'Medication updated successfully', [
+        {
+          text: 'OK',
+          onPress: () => navigation.goBack(),
+        },
+      ]);
     } catch (error) {
       console.error('Update medication error:', error);
       Alert.alert(
@@ -217,10 +237,9 @@ const EditMedicineScreen = ({ route, navigation }) => {
 
   if (!isAuthenticated) {
     return (
-      <View style={styles.container}>
-        <AppHeader navigation={navigation} />
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <Text style={{ fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 20 }}>
+      <SafeAreaView className="flex-1 bg-white" edges={['top', 'bottom']}>
+        <View className="flex-1 justify-center items-center p-5">
+          <Text className="text-base text-gray-600 text-center mb-5">
             Create an account to edit medications and sync changes across devices.
           </Text>
         </View>
@@ -232,510 +251,322 @@ const EditMedicineScreen = ({ route, navigation }) => {
           }}
           message="Create an account to edit medications and sync changes across devices."
         />
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <KeyboardAvoidingView
-        style={styles.keyboardView}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <SafeAreaView className="flex-1 bg-white" edges={['top', 'bottom']}>
+      {/* Header */}
+      <View className="flex-row items-center px-5 pt-4 pb-3">
+        <TouchableOpacity 
+          className="w-10 h-10 rounded-full bg-gray-100 justify-center items-center mr-3"
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="chevron-back" size={24} color="#333" />
+        </TouchableOpacity>
+        <Text className="text-2xl font-bold text-gray-900 flex-1">Edit Medication</Text>
+      </View>
+
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        className="flex-1"
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-        <AppHeader navigation={navigation} />
         <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
+          className="flex-1"
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ paddingBottom: 120 }}
         >
-          {/* Medication Name */}
-          <View style={styles.section}>
-            <Text style={styles.label}>
-              Medication Name <Text style={styles.asterisk}>*</Text>
-            </Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., Aspirin"
-              value={name}
-              onChangeText={setName}
-              autoCapitalize="words"
-            />
-          </View>
-
-          {/* Dosage */}
-          <View style={styles.section}>
-            <Text style={styles.label}>
-              Dosage <Text style={styles.asterisk}>*</Text>
-            </Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., 10mg, 2 tablets, 5ml"
-              value={dosage}
-              onChangeText={setDosage}
-            />
-          </View>
-
-          {/* Medication Type */}
-          <View style={styles.section}>
-            <Text style={styles.label}>
-              Medication Type <Text style={styles.asterisk}>*</Text>
-            </Text>
-            <View style={styles.typeContainer}>
-              {MEDICATION_TYPES.map((type) => (
-                <TouchableOpacity
-                  key={type.value}
-                  style={[
-                    styles.typeButton,
-                    medicationType === type.value && styles.typeButtonSelected
-                  ]}
-                  onPress={() => setMedicationType(type.value)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[
-                    styles.typeButtonText,
-                    medicationType === type.value && styles.typeButtonTextSelected
-                  ]}>
-                    {type.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {/* Times of Day */}
-          <View style={styles.section}>
-            <View style={styles.labelRow}>
-              <Text style={styles.label}>
-                Times of Day <Text style={styles.asterisk}>*</Text>
+          <View className="p-6">
+            {/* Medication Name */}
+            <View className="mb-6">
+              <Text className="text-sm font-semibold text-gray-600 mb-2">
+                Medication Name <Text style={{ color: '#E53935' }}>*</Text>
               </Text>
-              <TouchableOpacity
-                onPress={handleAddTime}
-                style={styles.addTimeButton}
-              >
-                <Text style={styles.addTimeIcon}>+</Text>
-              </TouchableOpacity>
-            </View>
-            {timesOfDay.map((time, index) => (
-              <View key={index} style={styles.timeRow}>
-                <TouchableOpacity
-                  style={styles.timeButton}
-                  onPress={() => openTimePicker(index)}
-                >
-                  <Text style={styles.timeButtonText}>
-                    {formatTime(time)}
-                  </Text>
-                </TouchableOpacity>
-                {showTimePicker && timePickerIndex === index && (
-                  <DateTimePicker
-                    value={tempTime}
-                    mode="time"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    onChange={handleTimeChange}
-                  />
-                )}
-                <TouchableOpacity
-                  onPress={() => handleRemoveTime(index)}
-                  style={styles.removeTimeButton}
-                >
-                  <Text style={styles.removeTimeIcon}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
-
-          {/* Start Date */}
-          <View style={styles.section}>
-            <Text style={styles.label}>
-              Start Date <Text style={styles.asterisk}>*</Text>
-            </Text>
-            <TouchableOpacity
-              style={styles.dateButton}
-              onPress={() => setShowStartDatePicker(true)}
-            >
-              <Text style={styles.dateButtonText}>
-                {startDate.toLocaleDateString()}
-              </Text>
-            </TouchableOpacity>
-            {showStartDatePicker && (
-              <DateTimePicker
-                value={startDate}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(event, selectedDate) => {
-                  setShowStartDatePicker(Platform.OS === 'ios');
-                  if (selectedDate) {
-                    setStartDate(selectedDate);
-                  }
-                }}
+              <TextInput
+                className="bg-gray-50 rounded-xl p-4 text-base"
+                placeholder="e.g., Aspirin"
+                placeholderTextColor="#999"
+                value={name}
+                onChangeText={setName}
+                autoCapitalize="words"
               />
-            )}
-          </View>
-
-          {/* End Date / Continuous */}
-          <View style={styles.section}>
-            <View style={styles.switchRow}>
-              <View style={styles.switchLabelContainer}>
-                <Text style={styles.label}>Continuous Medication</Text>
-              </View>
-              <TouchableOpacity
-                style={[
-                  styles.toggleSwitch,
-                  isContinuous && styles.toggleSwitchActive,
-                ]}
-                onPress={() => setIsContinuous(!isContinuous)}
-                activeOpacity={0.8}
-              >
-                <View
-                  style={[
-                    styles.toggleSwitchThumb,
-                    isContinuous && { transform: [{ translateX: 24 }] },
-                  ]}
-                />
-              </TouchableOpacity>
             </View>
-            {!isContinuous && (
-              <>
-                <Text style={[styles.label, { marginTop: 15 }]}>End Date</Text>
+
+            {/* Dosage */}
+            <View className="mb-6">
+              <Text className="text-sm font-semibold text-gray-600 mb-2">
+                Dosage <Text style={{ color: '#E53935' }}>*</Text>
+              </Text>
+              <TextInput
+                className="bg-gray-50 rounded-xl p-4 text-base"
+                placeholder="e.g., 10mg, 2 tablets, 5ml"
+                placeholderTextColor="#999"
+                value={dosage}
+                onChangeText={setDosage}
+              />
+            </View>
+
+            {/* Medication Type */}
+            <View className="mb-6">
+              <Text className="text-sm font-semibold text-gray-600 mb-2">
+                Medication Type <Text style={{ color: '#E53935' }}>*</Text>
+              </Text>
+              <View className="flex-row flex-wrap justify-between gap-2">
+                {MEDICATION_TYPES.map((type) => (
+                  <TouchableOpacity
+                    key={type.value}
+                    className={`w-[31%] py-3 px-2 rounded-xl items-center justify-center ${
+                      medicationType === type.value 
+                        ? 'bg-light-blue' 
+                        : 'bg-gray-50'
+                    }`}
+                    onPress={() => setMedicationType(type.value)}
+                    activeOpacity={0.7}
+                  >
+                    <View className="flex-row items-center justify-start gap-2 w-full">
+                      {getMedicationIcon(type.value, 20, medicationType === type.value ? '#fff' : '#666')}
+                      <Text className={`text-xs font-medium ${
+                        medicationType === type.value 
+                          ? 'text-white' 
+                          : 'text-gray-700'
+                      }`}>
+                        {type.label}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            {/* Times of Day */}
+            <View className="mb-6">
+              <View className="flex-row justify-between items-center mb-2">
+                <Text className="text-sm font-semibold text-gray-600">
+                  Times of Day <Text style={{ color: '#E53935' }}>*</Text>
+                </Text>
                 <TouchableOpacity
-                  style={styles.dateButton}
-                  onPress={() => setShowEndDatePicker(true)}
+                  onPress={handleAddTime}
+                  className="w-10 h-10 rounded-full items-center justify-center"
+                  style={{ backgroundColor: '#90CDF4' }}
                 >
-                  <Text style={styles.dateButtonText}>
-                    {endDate
-                      ? endDate.toLocaleDateString()
-                      : 'Select end date'}
-                  </Text>
+                  <Text className="text-white text-xl font-bold">+</Text>
                 </TouchableOpacity>
-                {showEndDatePicker && (
-                  <DateTimePicker
-                    value={endDate || new Date()}
-                    mode="date"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    onChange={(event, selectedDate) => {
-                      setShowEndDatePicker(Platform.OS === 'ios');
-                      if (selectedDate) {
-                        setEndDate(selectedDate);
-                      }
-                    }}
-                  />
-                )}
-              </>
-            )}
-          </View>
-
-          {/* Food Instructions */}
-          <View style={styles.section}>
-            <Text style={styles.label}>Food Instructions (Optional)</Text>
-            <TextInput
-              style={[styles.input, styles.textArea]}
-              placeholder="e.g., Take with food, Take on an empty stomach"
-              value={foodInstructions}
-              onChangeText={setFoodInstructions}
-              multiline
-            />
-          </View>
-
-          {/* Notes */}
-          <View style={styles.section}>
-            <Text style={styles.label}>Notes (Optional)</Text>
-            <TextInput
-              style={[styles.input, styles.textArea]}
-              placeholder="Any additional notes about this medication"
-              value={notes}
-              onChangeText={setNotes}
-              multiline
-            />
-          </View>
-
-          {/* Photo */}
-          <View style={styles.section}>
-            <Text style={styles.label}>Medication Photo (Optional)</Text>
-            <TouchableOpacity style={styles.photoButton} onPress={pickImage}>
-              {photo ? (
-                <Image source={{ uri: photo }} style={styles.photoPreview} />
+              </View>
+              {timesOfDay.length === 0 ? (
+                <Text className="text-sm text-gray-400 italic mt-2">
+                  No times added. Tap + to add a time.
+                </Text>
               ) : (
-                <Text style={styles.photoButtonText}>Upload Photo</Text>
+                timesOfDay.map((time, index) => (
+                  <View key={index} className="flex-row items-center mb-3 gap-3">
+                    <TouchableOpacity
+                      className="flex-1 bg-gray-50 rounded-xl p-4"
+                      onPress={() => openTimePicker(index)}
+                    >
+                      <Text className="text-base text-gray-900 font-medium">
+                        {formatTime(time)}
+                      </Text>
+                    </TouchableOpacity>
+                    {showTimePicker && timePickerIndex === index && (
+                      <DateTimePicker
+                        value={tempTime}
+                        mode="time"
+                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                        onChange={handleTimeChange}
+                      />
+                    )}
+                    <TouchableOpacity
+                      onPress={() => handleRemoveTime(index)}
+                      className="w-10 h-10 rounded-full items-center justify-center"
+                      style={{ backgroundColor: '#F44336' }}
+                    >
+                      <Text className="text-white text-lg font-bold">✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))
+              )}
+            </View>
+
+            {/* Start Date */}
+            <View className="mb-6">
+              <Text className="text-sm font-semibold text-gray-600 mb-2">
+                Start Date <Text style={{ color: '#E53935' }}>*</Text>
+              </Text>
+              <TouchableOpacity
+                className="bg-gray-50 rounded-xl p-4"
+                onPress={() => setShowStartDatePicker(true)}
+              >
+                <Text className="text-base text-gray-900 font-medium">
+                  {startDate.toLocaleDateString()}
+                </Text>
+              </TouchableOpacity>
+              {showStartDatePicker && (
+                <DateTimePicker
+                  value={startDate}
+                  mode="date"
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  onChange={(event, selectedDate) => {
+                    setShowStartDatePicker(Platform.OS === 'ios');
+                    if (selectedDate) {
+                      setStartDate(selectedDate);
+                    }
+                  }}
+                />
+              )}
+            </View>
+
+            {/* End Date / Continuous */}
+            <View className="mb-6">
+              <View className="flex-row justify-between items-center mb-3">
+                <Text className="text-sm font-semibold text-gray-600">Continuous Medication</Text>
+                <TouchableOpacity
+                  className={`w-14 h-8 rounded-full items-center justify-center ${
+                    isContinuous ? 'bg-light-blue' : 'bg-gray-300'
+                  }`}
+                  onPress={() => setIsContinuous(!isContinuous)}
+                  activeOpacity={0.8}
+                >
+                  <View
+                    className={`w-6 h-6 rounded-full bg-white ${
+                      isContinuous ? 'ml-6' : 'mr-6'
+                    }`}
+                  />
+                </TouchableOpacity>
+              </View>
+              {!isContinuous && (
+                <>
+                  <Text className="text-sm font-semibold text-gray-600 mb-2 mt-3">End Date</Text>
+                  <TouchableOpacity
+                    className="bg-gray-50 rounded-xl p-4"
+                    onPress={() => setShowEndDatePicker(true)}
+                  >
+                    <Text className="text-base text-gray-900 font-medium">
+                      {endDate ? endDate.toLocaleDateString() : 'Select end date'}
+                    </Text>
+                  </TouchableOpacity>
+                  {showEndDatePicker && (
+                    <DateTimePicker
+                      value={endDate || new Date()}
+                      mode="date"
+                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                      onChange={(event, selectedDate) => {
+                        setShowEndDatePicker(Platform.OS === 'ios');
+                        if (selectedDate) {
+                          setEndDate(selectedDate);
+                        }
+                      }}
+                    />
+                  )}
+                </>
+              )}
+            </View>
+
+            {/* Food Instructions */}
+            <View className="mb-6">
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Food Instructions (Optional)</Text>
+              <TextInput
+                className="bg-gray-50 rounded-xl p-4 text-base"
+                placeholder="e.g., Take with food, Take on an empty stomach"
+                placeholderTextColor="#999"
+                value={foodInstructions}
+                onChangeText={setFoodInstructions}
+                multiline
+                style={{ minHeight: 80, textAlignVertical: 'top' }}
+              />
+            </View>
+
+            {/* Notes */}
+            <View className="mb-6">
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Notes (Optional)</Text>
+              <TextInput
+                className="bg-gray-50 rounded-xl p-4 text-base"
+                placeholder="Any additional notes about this medication"
+                placeholderTextColor="#999"
+                value={notes}
+                onChangeText={setNotes}
+                multiline
+                style={{ minHeight: 80, textAlignVertical: 'top' }}
+              />
+            </View>
+
+            {/* Photo */}
+            <View className="mb-6">
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Medication Photo (Optional)</Text>
+              <TouchableOpacity 
+                className="bg-gray-50 rounded-xl p-4 items-center justify-center"
+                onPress={pickImage}
+                style={{ minHeight: 120 }}
+              >
+                {photo ? (
+                  <Image source={{ uri: photo }} className="w-full h-48 rounded-xl" resizeMode="cover" />
+                ) : (
+                  <View className="items-center">
+                    <MaterialIcons name="add-photo-alternate" size={32} color="#999" />
+                    <Text className="text-gray-500 mt-2">Upload Photo</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+              {photo && (
+                <TouchableOpacity
+                  onPress={() => setPhoto(null)}
+                  className="mt-3 bg-red-100 rounded-xl p-3 items-center"
+                >
+                  <Text className="text-red-600 font-semibold">Remove Photo</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Quantity Remaining */}
+            <View className="mb-6">
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Quantity Remaining (Optional)</Text>
+              <TextInput
+                className="bg-gray-50 rounded-xl p-4 text-base"
+                placeholder="e.g., 30"
+                placeholderTextColor="#999"
+                value={quantityRemaining}
+                onChangeText={setQuantityRemaining}
+                keyboardType="number-pad"
+              />
+            </View>
+
+            {/* Low Stock Threshold */}
+            <View className="mb-6">
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Low Stock Alert (days)</Text>
+              <TextInput
+                className="bg-gray-50 rounded-xl p-4 text-base"
+                placeholder="e.g., 7"
+                placeholderTextColor="#999"
+                value={lowStockThreshold}
+                onChangeText={setLowStockThreshold}
+                keyboardType="number-pad"
+              />
+            </View>
+
+            {/* Submit Button */}
+            <TouchableOpacity
+              className={`py-4 rounded-xl items-center justify-center mb-6 ${
+                loading ? 'bg-gray-400' : 'bg-light-blue'
+              }`}
+              onPress={handleSubmit}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text className="text-white text-lg font-semibold">Update Medication</Text>
               )}
             </TouchableOpacity>
-            {photo && (
-              <TouchableOpacity
-                onPress={() => setPhoto(null)}
-                style={styles.removePhotoButton}
-              >
-                <Text style={styles.removePhotoButtonText}>Remove Photo</Text>
-              </TouchableOpacity>
-            )}
           </View>
-
-          {/* Quantity Remaining */}
-          <View style={styles.section}>
-            <Text style={styles.label}>Quantity Remaining (Optional)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., 30"
-              value={quantityRemaining}
-              onChangeText={setQuantityRemaining}
-              keyboardType="number-pad"
-            />
-          </View>
-
-          {/* Low Stock Threshold */}
-          <View style={styles.section}>
-            <Text style={styles.label}>Low Stock Alert (days)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., 7"
-              value={lowStockThreshold}
-              onChangeText={setLowStockThreshold}
-              keyboardType="number-pad"
-            />
-          </View>
-
-          {/* Submit Button */}
-          <TouchableOpacity
-            style={[styles.submitButton, loading && styles.submitButtonDisabled]}
-            onPress={handleSubmit}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.submitButtonText}>Update Medication</Text>
-            )}
-          </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
-      <BottomTabBar />
-    </View>
+    </SafeAreaView>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  keyboardView: {
-    flex: 1,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  section: {
-    marginBottom: 25,
-  },
-  label: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  asterisk: {
-    color: '#d32f2f',
-  },
-  labelRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    backgroundColor: '#fff',
-  },
-  textArea: {
-    height: 80,
-    textAlignVertical: 'top',
-  },
-  addTimeButton: {
-    width: 35,
-    height: 35,
-    borderRadius: 17.5,
-    backgroundColor: '#4285F4',
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 2,
-    shadowColor: '#4285F4',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 3,
-  },
-  addTimeIcon: {
-    fontSize: 22,
-    color: '#fff',
-    fontWeight: '300',
-    lineHeight: 22,
-  },
-  timeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    gap: 12,
-  },
-  timeButton: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 10,
-    padding: 15,
-    backgroundColor: '#fff',
-  },
-  timeButtonText: {
-    fontSize: 18,
-    color: '#333',
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  removeTimeButton: {
-    width: 35,
-    height: 35,
-    borderRadius: 17.5,
-    backgroundColor: '#d32f2f',
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 2,
-    shadowColor: '#d32f2f',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 3,
-  },
-  removeTimeIcon: {
-    fontSize: 16,
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-  dateButton: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 12,
-    backgroundColor: '#fff',
-  },
-  dateButtonText: {
-    fontSize: 16,
-    color: '#333',
-  },
-  switchRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
-  switchLabelContainer: {
-    flex: 1,
-  },
-  toggleSwitch: {
-    width: 56,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#ddd',
-    justifyContent: 'center',
-    paddingHorizontal: 2,
-  },
-  toggleSwitchActive: {
-    backgroundColor: '#4285F4',
-  },
-  toggleSwitchThumb: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#fff',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 3,
-  },
-  photoButton: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f9f9f9',
-    minHeight: 120,
-  },
-  photoButtonText: {
-    fontSize: 16,
-    color: '#666',
-  },
-  photoPreview: {
-    width: '100%',
-    height: 200,
-    borderRadius: 8,
-    resizeMode: 'contain',
-  },
-  removePhotoButton: {
-    marginTop: 10,
-    alignSelf: 'flex-start',
-  },
-  removePhotoButtonText: {
-    color: '#d32f2f',
-    fontSize: 14,
-  },
-  typeContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  typeButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: '#ddd',
-    backgroundColor: '#fff',
-    minWidth: 100,
-    alignItems: 'center',
-  },
-  typeButtonSelected: {
-    borderColor: '#4285F4',
-    backgroundColor: '#E3F2FD',
-  },
-  typeButtonText: {
-    fontSize: 14,
-    color: '#666',
-    fontWeight: '500',
-  },
-  typeButtonTextSelected: {
-    color: '#4285F4',
-    fontWeight: '600',
-  },
-  submitButton: {
-    backgroundColor: '#d32f2f',
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  submitButtonDisabled: {
-    opacity: 0.6,
-  },
-  submitButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-});
+// Styles removed - using NativeWind classes instead
 
 export default EditMedicineScreen;
 

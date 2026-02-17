@@ -162,9 +162,19 @@ class NotificationService {
       const maxAllowed = 450; // Leave some room below the 500 limit
       
       // If we're close to the limit, cancel old notifications first
-      if (currentCount > 300) {
+      if (currentCount > 250) {
         console.log(`⚠️ ${currentCount} notifications scheduled, cleaning up old ones...`);
         await this.cleanupOldNotifications();
+        // Re-check count after cleanup
+        const afterCleanup = await Notifications.getAllScheduledNotificationsAsync();
+        console.log(`📊 After cleanup: ${afterCleanup.length} notifications remaining`);
+      }
+      
+      // If still over limit after cleanup, cancel all past notifications and reduce future ones
+      const recheckScheduled = await Notifications.getAllScheduledNotificationsAsync();
+      if (recheckScheduled.length >= 450) {
+        console.log(`⚠️ Still at limit (${recheckScheduled.length}), performing aggressive cleanup...`);
+        await this.cleanupOldNotifications(3); // Clean up notifications older than 3 days
       }
       
       // Cancel existing notifications for this medication
@@ -189,17 +199,21 @@ class NotificationService {
       const endDate = medication.is_continuous ? null : (medication.end_date ? new Date(medication.end_date) : null);
       const now = new Date();
       
-      // Reduce to next 30 days to stay under the 500 limit
-      const maxDays = 30;
+      // Reduce to next 14 days to stay under the 500 limit
+      const maxDays = 14;
       const maxDate = endDate 
         ? new Date(Math.min(endDate.getTime(), now.getTime() + maxDays * 24 * 60 * 60 * 1000))
         : new Date(now.getTime() + maxDays * 24 * 60 * 60 * 1000);
+      
+      // Re-check count after cleanup to get accurate number
+      const finalScheduled = await Notifications.getAllScheduledNotificationsAsync();
+      const finalCount = finalScheduled.length;
       
       // Start from today or start_date, whichever is later
       let currentDate = new Date(Math.max(startDate.getTime(), now.getTime()));
       
       let scheduledCount = 0;
-      const maxNotifications = Math.min(300, maxAllowed - currentCount); // Safety limit, respect Android limit
+      const maxNotifications = Math.min(200, maxAllowed - finalCount); // Safety limit, respect Android limit
       
       if (maxNotifications <= 0) {
         console.warn(`⚠️ Cannot schedule notifications - limit reached (${currentCount}/500)`);
@@ -230,6 +244,7 @@ class NotificationService {
             
             const notificationDate = new Date(currentDate);
             notificationDate.setHours(hours, minutes, 0, 0);
+            notificationDate.setSeconds(0, 0); // Ensure seconds and milliseconds are 0
             
             // Only schedule future notifications
             if (notificationDate > now) {
@@ -375,18 +390,18 @@ class NotificationService {
   /**
    * Clean up old notifications (older than 7 days)
    */
-  async cleanupOldNotifications() {
+  async cleanupOldNotifications(daysOld = 7) {
     try {
       const allScheduled = await Notifications.getAllScheduledNotificationsAsync();
       const now = new Date();
-      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const cutoffDate = new Date(now.getTime() - daysOld * 24 * 60 * 60 * 1000);
       
       let canceledCount = 0;
       for (const notification of allScheduled) {
         if (notification.trigger && notification.trigger.date) {
           const triggerDate = new Date(notification.trigger.date);
-          // Cancel notifications that are in the past or older than 7 days
-          if (triggerDate < sevenDaysAgo) {
+          // Cancel notifications that are in the past or older than cutoff
+          if (triggerDate < cutoffDate) {
             try {
               await Notifications.cancelScheduledNotificationAsync(notification.identifier);
               canceledCount++;
@@ -394,11 +409,15 @@ class NotificationService {
               // Continue with next notification
             }
           }
+        } else if (notification.trigger && notification.trigger.type === 'timeInterval') {
+          // For repeating notifications, check if they're in the past
+          // We can't easily determine the next trigger, so skip these
+          continue;
         }
       }
       
       if (canceledCount > 0) {
-        console.log(`🧹 Cleaned up ${canceledCount} old notifications`);
+        console.log(`🧹 Cleaned up ${canceledCount} old notifications (older than ${daysOld} days)`);
       }
     } catch (error) {
       console.error('Error cleaning up old notifications:', error);

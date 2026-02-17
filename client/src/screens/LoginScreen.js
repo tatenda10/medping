@@ -1,51 +1,77 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, TextInput, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import authService from '../services/authService';
+import { useSignIn, useOAuth } from '@clerk/clerk-expo';
+import { useAuth } from '../context/ClerkAuthContext';
 import onboardingService from '../services/onboardingService';
 import firebaseService from '../services/firebaseService';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const LoginScreen = ({ navigation: navProp, onLoginSuccess }) => {
   const navigation = navProp || useNavigation();
+  const { signIn, setActive, isLoaded } = useSignIn();
+  const { user, isAuthenticated, userId, isLoaded: authLoaded } = useAuth();
+  
+  // If user is already authenticated, navigate away from login screen
+  useEffect(() => {
+    if (authLoaded && isAuthenticated && userId) {
+      console.log('🟢 User already authenticated, navigating away from login screen');
+      // Call the success callback to trigger navigation
+      if (onLoginSuccess) {
+        onLoginSuccess();
+      } else {
+        // Fallback: navigate to onboarding or main app
+        navigation.replace('Onboarding');
+      }
+    }
+  }, [authLoaded, isAuthenticated, userId, onLoginSuccess, navigation]);
+  const { startOAuthFlow: startGoogleOAuth } = useOAuth({ 
+    strategy: 'oauth_google',
+    redirectUrl: 'mediping://oauth-callback',
+  });
+  const { startOAuthFlow: startAppleOAuth } = useOAuth({ 
+    strategy: 'oauth_apple',
+    redirectUrl: 'mediping://oauth-callback',
+  });
   const [loading, setLoading] = useState(false);
   const [loadingProvider, setLoadingProvider] = useState(null); // 'google', 'apple', or 'email'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
   const handleGoogleLogin = async () => {
+    if (!isLoaded) return;
+    
     setLoading(true);
     setLoadingProvider('google');
     
     try {
-      const result = await authService.signInWithGoogle();
+      // Start OAuth flow - this will open a browser/webview
+      const { createdSessionId, setActive } = await startGoogleOAuth({
+        redirectUrl: 'mediping://oauth-callback',
+      });
       
-      if (result.success) {
-        // Store token
-        await AsyncStorage.setItem('authToken', result.token);
-        await AsyncStorage.setItem('userData', JSON.stringify(result.user));
+      if (createdSessionId) {
+        await setActive({ session: createdSessionId });
         
         // Track login
         firebaseService.userLoggedIn('google');
         
         // Call success callback
         if (onLoginSuccess) {
-          onLoginSuccess(result.user, result.token);
-        } else {
-          // If called from onboarding, navigate to reset auth state
-          // The AppNavigator will detect the token and update state
-          navigation.getParent()?.reset({
-            index: 0,
-            routes: [{ name: 'Login' }],
-          });
+          onLoginSuccess();
         }
-      } else {
-        Alert.alert('Login Failed', result.error || 'Failed to sign in with Google');
       }
     } catch (error) {
       console.error('Google login error:', error);
-      Alert.alert('Error', error.message || 'An error occurred during login');
+      // Check if it's the origin error - might be a Clerk internal issue
+      if (error.message?.includes('origin') || error.message?.includes('undefined')) {
+        Alert.alert(
+          'OAuth Error', 
+          'There was an issue with the OAuth configuration. Please ensure Clerk is properly configured in your dashboard.'
+        );
+      } else {
+        Alert.alert('Login Failed', error.message || 'Failed to sign in with Google');
+      }
     } finally {
       setLoading(false);
       setLoadingProvider(null);
@@ -53,30 +79,39 @@ const LoginScreen = ({ navigation: navProp, onLoginSuccess }) => {
   };
 
   const handleAppleLogin = async () => {
+    if (!isLoaded) return;
+    
     setLoading(true);
     setLoadingProvider('apple');
     
     try {
-      const result = await authService.signInWithApple();
+      // Start OAuth flow - this will open a browser/webview
+      const { createdSessionId, setActive } = await startAppleOAuth({
+        redirectUrl: 'mediping://oauth-callback',
+      });
       
-      if (result.success) {
-        // Store token
-        await AsyncStorage.setItem('authToken', result.token);
-        await AsyncStorage.setItem('userData', JSON.stringify(result.user));
+      if (createdSessionId) {
+        await setActive({ session: createdSessionId });
         
         // Track login
         firebaseService.userLoggedIn('apple');
         
         // Call success callback
         if (onLoginSuccess) {
-          onLoginSuccess(result.user, result.token);
+          onLoginSuccess();
         }
-      } else {
-        Alert.alert('Login Failed', result.error || 'Failed to sign in with Apple');
       }
     } catch (error) {
       console.error('Apple login error:', error);
-      Alert.alert('Error', error.message || 'An error occurred during login');
+      // Check if it's the origin error - might be a Clerk internal issue
+      if (error.message?.includes('origin') || error.message?.includes('undefined')) {
+        Alert.alert(
+          'OAuth Error', 
+          'There was an issue with the OAuth configuration. Please ensure Clerk is properly configured in your dashboard.'
+        );
+      } else {
+        Alert.alert('Login Failed', error.message || 'Failed to sign in with Apple');
+      }
     } finally {
       setLoading(false);
       setLoadingProvider(null);
@@ -89,30 +124,33 @@ const LoginScreen = ({ navigation: navProp, onLoginSuccess }) => {
       return;
     }
 
+    if (!isLoaded) return;
+
     setLoading(true);
     setLoadingProvider('email');
     
     try {
-      const result = await authService.login(email, password);
-      
-      if (result.success) {
-        // Store token
-        await AsyncStorage.setItem('authToken', result.token);
-        await AsyncStorage.setItem('userData', JSON.stringify(result.user));
+      const result = await signIn.create({
+        identifier: email,
+        password: password,
+      });
+
+      if (result.status === 'complete') {
+        await setActive({ session: result.createdSessionId });
         
         // Track login
         firebaseService.userLoggedIn('email');
         
         // Call success callback
         if (onLoginSuccess) {
-          onLoginSuccess(result.user, result.token);
+          onLoginSuccess();
         }
       } else {
-        Alert.alert('Login Failed', result.error || 'Failed to sign in');
+        Alert.alert('Login Failed', 'Please check your email and password');
       }
     } catch (error) {
       console.error('Email login error:', error);
-      Alert.alert('Error', error.message || 'An error occurred during login');
+      Alert.alert('Login Failed', error.errors?.[0]?.message || error.message || 'Failed to sign in');
     } finally {
       setLoading(false);
       setLoadingProvider(null);
@@ -157,7 +195,7 @@ const LoginScreen = ({ navigation: navProp, onLoginSuccess }) => {
         <TouchableOpacity
           style={[styles.button, styles.emailButton]}
           onPress={handleEmailLogin}
-          disabled={loading}
+          disabled={loading || !isLoaded}
         >
           {loading && loadingProvider === 'email' ? (
             <ActivityIndicator color="#fff" />
@@ -177,7 +215,7 @@ const LoginScreen = ({ navigation: navProp, onLoginSuccess }) => {
         <TouchableOpacity
           style={[styles.button, styles.googleButton]}
           onPress={handleGoogleLogin}
-          disabled={loading}
+          disabled={loading || !isLoaded}
         >
           {loading && loadingProvider === 'google' ? (
             <ActivityIndicator color="#4285F4" />
@@ -196,7 +234,7 @@ const LoginScreen = ({ navigation: navProp, onLoginSuccess }) => {
         <TouchableOpacity
           style={[styles.button, styles.appleButton]}
           onPress={handleAppleLogin}
-          disabled={loading}
+          disabled={loading || !isLoaded}
         >
           {loading && loadingProvider === 'apple' ? (
             <ActivityIndicator color="#000" />
@@ -351,4 +389,3 @@ const styles = StyleSheet.create({
 });
 
 export default LoginScreen;
-

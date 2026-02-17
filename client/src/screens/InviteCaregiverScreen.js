@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
-  StyleSheet,
   TextInput,
   TouchableOpacity,
   Alert,
@@ -10,8 +9,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import AppHeader from '../components/AppHeader';
-import BottomTabBar from '../components/BottomTabBar';
+import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
 import BASE_URL from '../context/Api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -27,7 +25,6 @@ const InviteCaregiverScreen = ({ navigation }) => {
       return;
     }
 
-    // Basic email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email.trim())) {
       Alert.alert('Error', 'Please enter a valid email address');
@@ -76,11 +73,6 @@ const InviteCaregiverScreen = ({ navigation }) => {
 
   const handleShareLink = async () => {
     try {
-      const token = await AsyncStorage.getItem('authToken');
-      const userData = await AsyncStorage.getItem('userData');
-      const user = userData ? JSON.parse(userData) : null;
-      
-      // Create a shareable link (you can customize this)
       const shareText = `Join me on MediPing to view my medication schedule! Download the app and sign up with your email.`;
       
       if (await Sharing.isAvailableAsync()) {
@@ -88,7 +80,6 @@ const InviteCaregiverScreen = ({ navigation }) => {
           message: shareText,
         });
       } else {
-        // Fallback: show alert
         Alert.alert('Share', shareText);
       }
     } catch (error) {
@@ -98,18 +89,29 @@ const InviteCaregiverScreen = ({ navigation }) => {
   };
 
   return (
-    <View style={styles.container}>
-      <AppHeader title="Invite Caregiver" />
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Invite by Email</Text>
-          <Text style={styles.sectionDescription}>
+    <SafeAreaView className="flex-1 bg-white" edges={['top']}>
+      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+        {/* Header */}
+        <View className="flex-row items-center px-5 pt-4 pb-3">
+          <TouchableOpacity 
+            className="w-10 h-10 rounded-full bg-gray-100 justify-center items-center mr-3"
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="chevron-back" size={24} color="#333" />
+          </TouchableOpacity>
+          <Text className="text-2xl font-bold text-gray-900 flex-1">Invite Caregiver</Text>
+        </View>
+
+        {/* Invite by Email Section */}
+        <View className="px-5 mb-6">
+          <Text className="text-lg font-bold text-gray-900 mb-2">Invite by Email</Text>
+          <Text className="text-sm text-gray-600 mb-5">
             Enter the email address of the person you want to share your medication schedule with.
           </Text>
 
-          <View style={styles.inputContainer}>
+          <View className="mb-5">
             <TextInput
-              style={styles.input}
+              className="bg-gray-50 rounded-xl p-4 text-base"
               placeholder="Enter email address"
               placeholderTextColor="#999"
               value={email}
@@ -122,108 +124,42 @@ const InviteCaregiverScreen = ({ navigation }) => {
           </View>
 
           <TouchableOpacity
-            style={[styles.button, styles.inviteButton, loading && styles.buttonDisabled]}
+            className="rounded-xl p-4 items-center justify-center"
+            style={{ backgroundColor: loading ? '#B0BEC5' : '#90CDF4' }}
             onPress={handleInvite}
             disabled={loading}
+            activeOpacity={0.7}
           >
             {loading ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color="white" />
             ) : (
-              <Text style={styles.buttonText}>Send Invitation</Text>
+              <Text className="text-base font-bold text-white">Send Invitation</Text>
             )}
           </TouchableOpacity>
         </View>
 
-        <View style={styles.divider} />
+        {/* Divider */}
+        <View className="h-px bg-gray-200 mx-5 my-6" />
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Share Link</Text>
-          <Text style={styles.sectionDescription}>
+        {/* Share Link Section */}
+        <View className="px-5 mb-8">
+          <Text className="text-lg font-bold text-gray-900 mb-2">Share Link</Text>
+          <Text className="text-sm text-gray-600 mb-5">
             Share a link that allows others to join and view your schedule.
           </Text>
 
           <TouchableOpacity
-            style={[styles.button, styles.shareButton]}
+            className="bg-white rounded-xl p-4 items-center justify-center border-2"
+            style={{ borderColor: '#90CDF4' }}
             onPress={handleShareLink}
+            activeOpacity={0.7}
           >
-            <Text style={styles.shareButtonText}>Share Link</Text>
+            <Text className="text-base font-bold" style={{ color: '#90CDF4' }}>Share Link</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
-      <BottomTabBar />
-    </View>
+    </SafeAreaView>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  content: {
-    flex: 1,
-    padding: 20,
-  },
-  section: {
-    marginBottom: 30,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 8,
-  },
-  sectionDescription: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 20,
-    lineHeight: 20,
-  },
-  inputContainer: {
-    marginBottom: 20,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 15,
-    fontSize: 16,
-    backgroundColor: '#fff',
-  },
-  button: {
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 50,
-  },
-  inviteButton: {
-    backgroundColor: '#4285F4',
-  },
-  shareButton: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#4285F4',
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  shareButtonText: {
-    color: '#4285F4',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#e0e0e0',
-    marginVertical: 20,
-  },
-});
-
 export default InviteCaregiverScreen;
-

@@ -5,10 +5,10 @@ import axios from 'axios';
 import BASE_URL from '../context/Api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/ClerkAuthContext';
 
 const DrawerContent = ({ navigation, onLogout }) => {
-  const { isAuthenticated, authToken } = useAuth();
+  const { isAuthenticated, isSignedIn, getToken } = useAuth();
   const [pendingInvitations, setPendingInvitations] = useState([]);
   const [loadingInvitations, setLoadingInvitations] = useState(true);
 
@@ -23,7 +23,7 @@ const DrawerContent = ({ navigation, onLogout }) => {
 
   const loadInvitations = async () => {
     try {
-      const token = await AsyncStorage.getItem('authToken');
+      const token = await getToken();
       if (!token) {
         setLoadingInvitations(false);
         return;
@@ -163,17 +163,6 @@ const DrawerContent = ({ navigation, onLogout }) => {
           <Text style={styles.menuItemText}>Water Intake</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.menuItem}
-          onPress={() => {
-            navigation.navigate('Appointments');
-            navigation.closeDrawer();
-          }}
-        >
-          <MaterialIcons name="event" size={24} color="#555" style={styles.menuIcon} />
-          <Text style={styles.menuItemText}>Appointments</Text>
-        </TouchableOpacity>
-
         {/* Pending Invitations Section */}
         {pendingInvitations.length > 0 && (
           <>
@@ -222,7 +211,7 @@ const DrawerContent = ({ navigation, onLogout }) => {
       </View>
 
       {/* Only show logout button if user is authenticated */}
-      {isAuthenticated && authToken && (
+      {isAuthenticated && isSignedIn && (
         <View style={styles.footer}>
           <TouchableOpacity
             style={styles.logoutItem}

@@ -8,11 +8,11 @@ const BottomTabBar = () => {
   const navigation = useNavigation();
 
   const tabs = [
-    { name: 'Dashboard', label: 'Dashboard', icon: (color, size) => <MaterialIcons name="dashboard" size={size} color={color} /> },
-    { name: 'Calendar', label: 'Calendar', icon: (color, size) => <Ionicons name="calendar-outline" size={size} color={color} /> },
-    { name: 'Metrics', label: 'Metrics', icon: (color, size) => <MaterialIcons name="analytics" size={size} color={color} /> },
-    { name: 'ProfileTab', label: 'Profile', icon: (color, size) => <Ionicons name="person-circle-outline" size={size} color={color} /> },
-    { name: 'Settings', label: 'Settings', icon: (color, size) => <Ionicons name="settings-outline" size={size} color={color} /> },
+    { name: 'Dashboard', label: 'HOME', icon: (color, size) => <MaterialIcons name="home" size={size} color={color} /> },
+    { name: 'Calendar', label: 'CALENDAR', icon: (color, size) => <Ionicons name="calendar-outline" size={size} color={color} /> },
+    { name: 'AddMedicine', label: '', icon: (color, size) => <MaterialIcons name="add" size={32} color="white" />, isCenter: true },
+    { name: 'Metrics', label: 'VITALS', icon: (color, size) => <MaterialIcons name="favorite" size={size} color={color} /> },
+    { name: 'Settings', label: 'SETTINGS', icon: (color, size) => <Ionicons name="settings-outline" size={size} color={color} /> },
   ];
 
   const handleTabPress = (tab) => {
@@ -21,7 +21,7 @@ const BottomTabBar = () => {
       const currentRouteName = currentState?.routes[currentState?.index]?.name;
       
       // Check if we're already in a MainTabs tab screen
-      if (['Dashboard', 'Calendar', 'Metrics', 'ProfileTab', 'Settings'].includes(currentRouteName)) {
+      if (['Dashboard', 'Calendar', 'Metrics', 'Settings'].includes(currentRouteName)) {
         // We're already in MainTabs, navigate directly to the tab
         navigation.navigate(tab.name);
         return;
@@ -82,19 +82,35 @@ const BottomTabBar = () => {
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
       <View style={styles.tabBar}>
-        {tabs.map((tab) => (
-          <TouchableOpacity
-            key={tab.name}
-            style={styles.tab}
-            onPress={() => handleTabPress(tab)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.tabIconWrapper}>
-              {tab.icon('#4285F4', 22)}
-            </View>
-            <Text style={styles.tabLabel}>{tab.label}</Text>
-          </TouchableOpacity>
-        ))}
+        {tabs.map((tab) => {
+          if (tab.isCenter) {
+            return (
+              <TouchableOpacity
+                key={tab.name}
+                style={styles.centerTab}
+                onPress={() => navigation.navigate('AddMedicine')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.centerButton}>
+                  {tab.icon('#4285F4', 32)}
+                </View>
+              </TouchableOpacity>
+            );
+          }
+          return (
+            <TouchableOpacity
+              key={tab.name}
+              style={styles.tab}
+              onPress={() => handleTabPress(tab)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.tabIconWrapper}>
+                {tab.icon('#999', 22)}
+              </View>
+              <Text style={styles.tabLabel}>{tab.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
     </SafeAreaView>
   );
@@ -112,19 +128,41 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
     backgroundColor: '#fff',
+    alignItems: 'center',
   },
   tab: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  centerTab: {
+    width: 60,
+    height: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  centerButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#90CDF4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
   tabIconWrapper: {
     marginBottom: 4,
   },
   tabLabel: {
-    fontSize: 12,
-    fontWeight: '500',
+    fontSize: 10,
+    fontWeight: '600',
     color: '#999',
+    textTransform: 'uppercase',
   },
 });
 

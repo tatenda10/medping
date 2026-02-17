@@ -1,4 +1,4 @@
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/ClerkAuthContext';
 
 // Legacy hook - now uses AuthContext for consistency
 export const useAuthCheck = () => {

@@ -3,11 +3,10 @@ import * as Notifications from 'expo-notifications';
 import { useNavigation, CommonActions } from '@react-navigation/native';
 import { navigationRef } from '../navigation/navigationRef';
 import notificationService from '../services/notificationService';
-import BASE_URL from '../context/Api';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
+import { clerkAxios } from '../utils/clerkAxios';
 import databaseService from '../services/databaseService';
 import syncService from '../services/syncService';
+import { useAuth } from '../context/ClerkAuthContext';
 
 // Simple ID generator for React Native
 const generateId = () => {
@@ -50,6 +49,7 @@ const navigate = (name, params) => {
  */
 export const useNotificationHandler = () => {
   const navigation = useNavigation();
+  const { userId, isAuthenticated } = useAuth();
   const notificationListener = useRef();
   const responseListener = useRef();
 
@@ -87,7 +87,6 @@ export const useNotificationHandler = () => {
       console.log('Notification action:', actionIdentifier, data);
 
       try {
-        const token = await AsyncStorage.getItem('authToken');
         const scheduledTime = new Date(date);
 
         // Check if this is a grouped notification
@@ -100,27 +99,27 @@ export const useNotificationHandler = () => {
             // Log all medications in group as taken
             if (isGrouped && medicationIds.length > 1) {
               for (const medId of medicationIds) {
-                await logDose(token, medId, scheduledTime, 'taken');
+                await logDose(medId, scheduledTime, 'taken');
               }
             } else {
-              await logDose(token, medicationId, scheduledTime, 'taken');
+              await logDose(medicationId, scheduledTime, 'taken');
             }
             // Cancel the notification
             await Notifications.dismissNotificationAsync(notification.request.identifier);
             break;
 
           case 'SNOOZE_5':
-            await handleSnooze(medicationId, time, 5, token, isGrouped, medicationIds);
+            await handleSnooze(medicationId, time, 5, isGrouped, medicationIds);
             await Notifications.dismissNotificationAsync(notification.request.identifier);
             break;
 
           case 'SNOOZE_10':
-            await handleSnooze(medicationId, time, 10, token, isGrouped, medicationIds);
+            await handleSnooze(medicationId, time, 10, isGrouped, medicationIds);
             await Notifications.dismissNotificationAsync(notification.request.identifier);
             break;
 
           case 'SNOOZE_30':
-            await handleSnooze(medicationId, time, 30, token, isGrouped, medicationIds);
+            await handleSnooze(medicationId, time, 30, isGrouped, medicationIds);
             await Notifications.dismissNotificationAsync(notification.request.identifier);
             break;
 
@@ -128,10 +127,10 @@ export const useNotificationHandler = () => {
             // Log all medications in group as missed
             if (isGrouped && medicationIds.length > 1) {
               for (const medId of medicationIds) {
-                await logDose(token, medId, scheduledTime, 'missed');
+                await logDose(medId, scheduledTime, 'missed');
               }
             } else {
-              await logDose(token, medicationId, scheduledTime, 'missed');
+              await logDose(medicationId, scheduledTime, 'missed');
             }
             await Notifications.dismissNotificationAsync(notification.request.identifier);
             break;
@@ -166,9 +165,9 @@ export const useNotificationHandler = () => {
         responseListener.current.remove();
       }
     };
-  }, [navigation]);
+  }, [navigation, userId, isAuthenticated]);
 
-  const handleSnooze = async (medicationId, originalTime, minutes, token, isGrouped = false, medicationIds = []) => {
+  const handleSnooze = async (medicationId, originalTime, minutes, isGrouped = false, medicationIds = []) => {
     try {
       const snoozeDate = new Date();
       snoozeDate.setMinutes(snoozeDate.getMinutes() + minutes);
@@ -177,9 +176,7 @@ export const useNotificationHandler = () => {
         // Snooze all medications in the group
         for (const medId of medicationIds) {
           try {
-            const response = await axios.get(`${BASE_URL}/medications/${medId}`, {
-              headers: { 'Authorization': `Bearer ${token}` },
-            });
+            const response = await clerkAxios.get(`/medications/${medId}`);
 
             if (response.data.success) {
               const medication = response.data.medication;
@@ -195,9 +192,7 @@ export const useNotificationHandler = () => {
         }
       } else {
         // Single medication snooze
-        const response = await axios.get(`${BASE_URL}/medications/${medicationId}`, {
-          headers: { 'Authorization': `Bearer ${token}` },
-        });
+        const response = await clerkAxios.get(`/medications/${medicationId}`);
 
         if (response.data.success) {
           const medication = response.data.medication;
@@ -213,13 +208,13 @@ export const useNotificationHandler = () => {
     }
   };
 
-  const logDose = async (token, medicationId, scheduledTime, status) => {
+  const logDose = async (medicationId, scheduledTime, status) => {
     try {
-      const userData = await AsyncStorage.getItem('userData');
-      const user = userData ? JSON.parse(userData) : null;
-      const userId = user?.id || user?.user?.id;
-
-      if (!userId) return;
+      // Use Clerk userId from context
+      if (!userId || !isAuthenticated) {
+        console.log('User not authenticated, skipping dose log');
+        return;
+      }
 
       // Save to local database first (offline-first)
       const doseLog = {
@@ -237,15 +232,12 @@ export const useNotificationHandler = () => {
       const online = await syncService.isOnline();
       if (online) {
         try {
-          await axios.post(
-            `${BASE_URL}/dose-logs`,
+          await clerkAxios.post(
+            '/dose-logs',
             {
               medication_id: medicationId,
               scheduled_time: scheduledTime.toISOString(),
               status: status,
-            },
-            {
-              headers: { 'Authorization': `Bearer ${token}` },
             }
           );
           await databaseService.markDoseLogSynced(doseLog.id);

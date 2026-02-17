@@ -17,8 +17,7 @@ import { format, isPast, isToday, isFuture, parseISO, differenceInDays, differen
 import DateTimePicker from '@react-native-community/datetimepicker';
 import databaseService from '../services/databaseService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
-import BASE_URL from '../context/Api';
+import { clerkAxios } from '../utils/clerkAxios';
 import syncService from '../services/syncService';
 import notificationService from '../services/notificationService';
 
@@ -75,35 +74,30 @@ const AppointmentsScreen = ({ navigation }) => {
       const online = await syncService.isOnline();
       if (online) {
         try {
-          const token = await AsyncStorage.getItem('authToken');
-          if (token) {
-            const response = await axios.get(`${BASE_URL}/appointments`, {
-              headers: { 'Authorization': `Bearer ${token}` },
-            });
+          const response = await clerkAxios.get('/appointments');
 
-            if (response.data.success && response.data.appointments) {
-              const serverAppointments = response.data.appointments || [];
-              
-              // Update local database with server data
-              for (const serverAppt of serverAppointments) {
-                try {
-                  const apptToSave = {
-                    ...serverAppt,
-                    user_id: userId,
-                  };
-                  await databaseService.saveAppointment(apptToSave);
-                } catch (saveError) {
-                  console.error('Error saving appointment:', saveError);
-                }
+          if (response.data.success && response.data.appointments) {
+            const serverAppointments = response.data.appointments || [];
+            
+            // Update local database with server data
+            for (const serverAppt of serverAppointments) {
+              try {
+                const apptToSave = {
+                  ...serverAppt,
+                  user_id: userId,
+                };
+                await databaseService.saveAppointment(apptToSave);
+              } catch (saveError) {
+                console.error('Error saving appointment:', saveError);
               }
-              
-              // Reload from local database
-              const updatedAppointments = await databaseService.getAppointments(userId);
-              const sortedUpdated = updatedAppointments.sort((a, b) => 
-                new Date(a.scheduled_time) - new Date(b.scheduled_time)
-              );
-              setAppointments(sortedUpdated);
             }
+            
+            // Reload from local database
+            const updatedAppointments = await databaseService.getAppointments(userId);
+            const sortedUpdated = updatedAppointments.sort((a, b) => 
+              new Date(a.scheduled_time) - new Date(b.scheduled_time)
+            );
+            setAppointments(sortedUpdated);
           }
         } catch (error) {
           console.log('Using local appointments data - offline or server error');
@@ -159,21 +153,16 @@ const AppointmentsScreen = ({ navigation }) => {
       const online = await syncService.isOnline();
       if (online) {
         try {
-          const token = await AsyncStorage.getItem('authToken');
-          if (token) {
-            const response = await axios.post(`${BASE_URL}/appointments`, appointmentData, {
-              headers: { 'Authorization': `Bearer ${token}` },
-            });
+          const response = await clerkAxios.post('/appointments', appointmentData);
+          
+          if (response.data.success && response.data.appointment) {
+            // Update with server data
+            const updatedAppointment = response.data.appointment;
             
-            if (response.data.success && response.data.appointment) {
-              // Update with server data
-              const updatedAppointment = response.data.appointment;
-              
-              // Reschedule reminder with server data if needed
-              if (enableReminder) {
-                await notificationService.cancelAppointmentReminders(appointmentData.id);
-                await notificationService.scheduleAppointmentReminder(updatedAppointment);
-              }
+            // Reschedule reminder with server data if needed
+            if (enableReminder) {
+              await notificationService.cancelAppointmentReminders(appointmentData.id);
+              await notificationService.scheduleAppointmentReminder(updatedAppointment);
             }
           }
         } catch (error) {
@@ -224,12 +213,7 @@ const AppointmentsScreen = ({ navigation }) => {
               const online = await syncService.isOnline();
               if (online) {
                 try {
-                  const token = await AsyncStorage.getItem('authToken');
-                  if (token) {
-                    await axios.delete(`${BASE_URL}/appointments/${appointmentId}`, {
-                      headers: { 'Authorization': `Bearer ${token}` },
-                    });
-                  }
+                  await clerkAxios.delete(`/appointments/${appointmentId}`);
                 } catch (error) {
                   console.log('Deleted locally, will sync later');
                 }

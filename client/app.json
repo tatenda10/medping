@@ -18,7 +18,13 @@
       "bundleIdentifier": "com.mediping.app",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryUsageDescription": "MediPing needs access to your photo library to allow you to add photos of your medications. For example, you can take a picture of your medication bottle or pill container to help you identify and track your medications more easily. These photos are stored securely on your device and are only used within the app to help you manage your medication schedule.",
+        "NSPhotoLibraryAddUsageDescription": "MediPing needs access to save medication photos to your photo library. For example, if you want to save a photo of your medication for reference outside the app, we'll save it to your photo library with your permission.",
+        "UIBackgroundModes": [
+          "fetch",
+          "processing"
+        ]
       }
     },
     "android": {
@@ -28,14 +34,22 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.mediping.app",
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "WAKE_LOCK"
+      ]
     },
     "plugins": [
       [
         "expo-build-properties",
         {
           "android": {
-            "googleServicesFile": "./google-services.json"
+            "googleServicesFile": "./google-services.json",
+            "gradleProperties": {
+              "android.useAndroidX": "true",
+              "android.enableJetifier": "true"
+            }
           },
           "ios": {
             "googleServicesFile": "./GoogleService-Info.plist",
@@ -46,7 +60,8 @@
             "buildReactNativeFromSource": true
           }
         }
-      ]
+      ],
+      "./plugins/withRemoveAdIdPermission.js"
     ],
     "web": {
       "favicon": "./assets/logo.png",

@@ -12,12 +12,12 @@ import {
   Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import { format, startOfDay, isToday, subDays, eachDayOfInterval, startOfWeek, endOfWeek, parseISO, differenceInDays } from 'date-fns';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 import databaseService from '../services/databaseService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
-import BASE_URL from '../context/Api';
+import { clerkAxios } from '../utils/clerkAxios';
 import syncService from '../services/syncService';
 
 const screenWidth = Dimensions.get('window').width;
@@ -62,15 +62,59 @@ const WaterIntakeScreen = ({ navigation }) => {
       const user = userData ? JSON.parse(userData) : null;
       const userId = user?.id || user?.user?.id || 'guest';
 
-      if (userId === 'guest') return;
+      if (userId === 'guest') {
+        setIntakeHistory([]);
+        return;
+      }
 
-      const healthLogs = await databaseService.getHealthLogs(userId);
-      const waterLogs = healthLogs
-        .filter(log => log.log_type === 'water_intake')
-        .sort((a, b) => new Date(a.recorded_at) - new Date(b.recorded_at));
-      
-      setIntakeHistory(waterLogs);
-      calculateTodayIntake(waterLogs);
+      if (Platform.OS !== 'web') {
+        const healthLogs = await databaseService.getHealthLogs(userId);
+        const waterLogs = healthLogs
+          .filter(log => log.log_type === 'water_intake')
+          .sort((a, b) => new Date(a.recorded_at) - new Date(b.recorded_at));
+        
+        setIntakeHistory(waterLogs);
+        calculateTodayIntake(waterLogs);
+      } else {
+        setIntakeHistory([]);
+      }
+
+      // Try to sync from server
+      const online = await syncService.isOnline();
+      if (online) {
+        try {
+          const response = await clerkAxios.get('/health-logs?type=water_intake');
+
+          if (response.data.success && response.data.healthLogs) {
+            const serverLogs = response.data.healthLogs || [];
+            
+            if (Platform.OS !== 'web') {
+              for (const log of serverLogs) {
+                try {
+                  await databaseService.saveHealthLog({
+                    ...log,
+                    user_id: userId,
+                  });
+                } catch (saveError) {
+                  console.error('Error saving health log:', saveError);
+                }
+              }
+              
+              const updatedLogs = await databaseService.getHealthLogs(userId);
+              const waterLogs = updatedLogs
+                .filter(log => log.log_type === 'water_intake')
+                .sort((a, b) => new Date(a.recorded_at) - new Date(b.recorded_at));
+              setIntakeHistory(waterLogs);
+              calculateTodayIntake(waterLogs);
+            } else {
+              setIntakeHistory(serverLogs);
+              calculateTodayIntake(serverLogs);
+            }
+          }
+        } catch (error) {
+          console.log('Using local water intake data - offline or server error');
+        }
+      }
     } catch (error) {
       console.error('Error loading intake history:', error);
     }
@@ -99,8 +143,10 @@ const WaterIntakeScreen = ({ navigation }) => {
 
       if (userId === 'guest') return;
 
-      const healthLogs = await databaseService.getHealthLogs(userId);
-      calculateTodayIntake(healthLogs);
+      if (Platform.OS !== 'web') {
+        const healthLogs = await databaseService.getHealthLogs(userId);
+        calculateTodayIntake(healthLogs);
+      }
     } catch (error) {
       console.error('Error loading today intake:', error);
     }
@@ -117,6 +163,7 @@ const WaterIntakeScreen = ({ navigation }) => {
 
       if (userId === 'guest') {
         Alert.alert('Error', 'Please create an account to track water intake');
+        setLoading(false);
         return;
       }
 
@@ -128,18 +175,15 @@ const WaterIntakeScreen = ({ navigation }) => {
         recorded_at: new Date().toISOString(),
       };
 
-      await databaseService.saveHealthLog(healthLog);
+      if (Platform.OS !== 'web') {
+        await databaseService.saveHealthLog(healthLog);
+      }
 
       // Sync to server
       const online = await syncService.isOnline();
       if (online) {
         try {
-          const token = await AsyncStorage.getItem('authToken');
-          if (token) {
-            await axios.post(`${BASE_URL}/health-logs`, healthLog, {
-              headers: { 'Authorization': `Bearer ${token}` },
-            });
-          }
+          await clerkAxios.post('/health-logs', healthLog);
         } catch (error) {
           console.log('Saved locally, will sync later');
         }
@@ -238,11 +282,6 @@ const WaterIntakeScreen = ({ navigation }) => {
     }
 
     // Total days with goal met
-    const daysWithGoal = intakeHistory.reduce((count, log) => {
-      const date = startOfDay(new Date(log.recorded_at));
-      return count;
-    }, 0);
-
     const uniqueDays = new Set(
       intakeHistory.map(log => format(startOfDay(new Date(log.recorded_at)), 'yyyy-MM-dd'))
     ).size;
@@ -304,7 +343,7 @@ const WaterIntakeScreen = ({ navigation }) => {
       datasets: [
         {
           data: intakeData,
-          color: (opacity = 1) => `rgba(66, 133, 244, ${opacity})`,
+          color: (opacity = 1) => `rgba(144, 205, 244, ${opacity})`,
           strokeWidth: 2,
         },
         {
@@ -349,44 +388,62 @@ const WaterIntakeScreen = ({ navigation }) => {
   const dailyChartData = prepareDailyChartData();
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
+    <SafeAreaView className="flex-1 bg-white" edges={['top', 'bottom']}>
       {/* Header */}
-      <View className="bg-primary rounded-t-[20px] px-6 py-6 flex-row justify-between items-center">
-        <Text className="text-lg font-bold text-white flex-1">Water Intake</Text>
-        <TouchableOpacity onPress={() => navigation.goBack()} className="px-4 py-2">
-          <Text className="text-base text-white font-semibold">✕</Text>
+      <View className="flex-row items-center px-5 pt-4 pb-3">
+        <TouchableOpacity 
+          className="w-10 h-10 rounded-full bg-gray-100 justify-center items-center mr-3"
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="chevron-back" size={24} color="#333" />
         </TouchableOpacity>
+        <Text className="text-2xl font-bold text-gray-900 flex-1">Water Intake</Text>
       </View>
 
       {/* Tabs */}
-      <View className="flex-row border-b border-gray-200 bg-white">
+      <View className="flex-row border-b border-gray-200 bg-white px-5">
         <TouchableOpacity
           className={`flex-1 py-3 items-center border-b-2 ${
-            activeTab === 'track' ? 'border-primary' : 'border-transparent'
+            activeTab === 'track' ? '' : 'border-transparent'
           }`}
+          style={{ borderBottomColor: activeTab === 'track' ? '#90CDF4' : 'transparent' }}
           onPress={() => setActiveTab('track')}
+          activeOpacity={0.7}
         >
-          <Text className={`text-sm font-semibold ${activeTab === 'track' ? 'text-primary' : 'text-gray-500'}`}>
+          <Text 
+            className="text-sm font-semibold"
+            style={{ color: activeTab === 'track' ? '#90CDF4' : '#999' }}
+          >
             Track
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
           className={`flex-1 py-3 items-center border-b-2 ${
-            activeTab === 'history' ? 'border-primary' : 'border-transparent'
+            activeTab === 'history' ? '' : 'border-transparent'
           }`}
+          style={{ borderBottomColor: activeTab === 'history' ? '#90CDF4' : 'transparent' }}
           onPress={() => setActiveTab('history')}
+          activeOpacity={0.7}
         >
-          <Text className={`text-sm font-semibold ${activeTab === 'history' ? 'text-primary' : 'text-gray-500'}`}>
+          <Text 
+            className="text-sm font-semibold"
+            style={{ color: activeTab === 'history' ? '#90CDF4' : '#999' }}
+          >
             History & Graphs
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
           className={`flex-1 py-3 items-center border-b-2 ${
-            activeTab === 'milestones' ? 'border-primary' : 'border-transparent'
+            activeTab === 'milestones' ? '' : 'border-transparent'
           }`}
+          style={{ borderBottomColor: activeTab === 'milestones' ? '#90CDF4' : 'transparent' }}
           onPress={() => setActiveTab('milestones')}
+          activeOpacity={0.7}
         >
-          <Text className={`text-sm font-semibold ${activeTab === 'milestones' ? 'text-primary' : 'text-gray-500'}`}>
+          <Text 
+            className="text-sm font-semibold"
+            style={{ color: activeTab === 'milestones' ? '#90CDF4' : '#999' }}
+          >
             Milestones
           </Text>
         </TouchableOpacity>
@@ -405,22 +462,32 @@ const WaterIntakeScreen = ({ navigation }) => {
           contentContainerStyle={{ paddingBottom: 120 }}
           nestedScrollEnabled={true}
         >
-          <View className="p-6">
+          <View className="p-5">
             {/* Track Tab */}
             {activeTab === 'track' && (
               <>
                 {/* Progress Circle */}
                 <View className="items-center mb-8">
-                  <View className="w-48 h-48 rounded-full bg-blue-100 border-8 border-primary items-center justify-center mb-5">
-                    <Text className="text-5xl font-bold text-primary">{todayIntake}</Text>
+                  <View 
+                    className="w-48 h-48 rounded-full items-center justify-center mb-5"
+                    style={{ 
+                      backgroundColor: '#E0F2FE',
+                      borderWidth: 8,
+                      borderColor: '#90CDF4',
+                    }}
+                  >
+                    <Text className="text-5xl font-bold" style={{ color: '#90CDF4' }}>{todayIntake}</Text>
                     <Text className="text-lg text-gray-600 mt-1">ml</Text>
                     <Text className="text-sm text-gray-500 mt-1">of {dailyGoal} ml</Text>
                   </View>
                   {/* Progress Bar */}
                   <View className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
                     <View 
-                      className="h-full bg-primary rounded-full"
-                      style={{ width: `${progress}%` }}
+                      className="h-full rounded-full"
+                      style={{ 
+                        width: `${progress}%`,
+                        backgroundColor: '#90CDF4',
+                      }}
                     />
                   </View>
                   <Text className="text-sm text-gray-600 mt-2">
@@ -430,42 +497,45 @@ const WaterIntakeScreen = ({ navigation }) => {
 
                 {/* Quick Add Buttons */}
                 <View className="mb-6">
-                  <Text className="text-lg font-semibold text-gray-800 mb-4">Quick Add</Text>
+                  <Text className="text-lg font-bold text-gray-900 mb-4">Quick Add</Text>
                   <View className="flex-row gap-3">
                     <TouchableOpacity
-                      className="flex-1 py-4 bg-primary rounded-xl items-center"
+                      className="flex-1 py-4 rounded-xl items-center"
+                      style={{ backgroundColor: '#90CDF4' }}
                       onPress={() => handleAddWater(250)}
                       disabled={loading}
-                      activeOpacity={0.8}
+                      activeOpacity={0.7}
                     >
                       {loading ? (
                         <ActivityIndicator color="#fff" size="small" />
                       ) : (
-                        <Text className="text-white text-base font-semibold">+250ml</Text>
+                        <Text className="text-white text-base font-bold">+250ml</Text>
                       )}
                     </TouchableOpacity>
                     <TouchableOpacity
-                      className="flex-1 py-4 bg-primary rounded-xl items-center"
+                      className="flex-1 py-4 rounded-xl items-center"
+                      style={{ backgroundColor: '#90CDF4' }}
                       onPress={() => handleAddWater(500)}
                       disabled={loading}
-                      activeOpacity={0.8}
+                      activeOpacity={0.7}
                     >
                       {loading ? (
                         <ActivityIndicator color="#fff" size="small" />
                       ) : (
-                        <Text className="text-white text-base font-semibold">+500ml</Text>
+                        <Text className="text-white text-base font-bold">+500ml</Text>
                       )}
                     </TouchableOpacity>
                     <TouchableOpacity
-                      className="flex-1 py-4 bg-primary rounded-xl items-center"
+                      className="flex-1 py-4 rounded-xl items-center"
+                      style={{ backgroundColor: '#90CDF4' }}
                       onPress={() => handleAddWater(750)}
                       disabled={loading}
-                      activeOpacity={0.8}
+                      activeOpacity={0.7}
                     >
                       {loading ? (
                         <ActivityIndicator color="#fff" size="small" />
                       ) : (
-                        <Text className="text-white text-base font-semibold">+750ml</Text>
+                        <Text className="text-white text-base font-bold">+750ml</Text>
                       )}
                     </TouchableOpacity>
                   </View>
@@ -474,42 +544,44 @@ const WaterIntakeScreen = ({ navigation }) => {
                 {/* Custom Amount */}
                 {showCustomInput ? (
                   <View className="mb-6">
-                    <Text className="text-base font-semibold text-gray-800 mb-2">Custom Amount (ml)</Text>
+                    <Text className="text-sm font-semibold text-gray-600 mb-2">Custom Amount (ml)</Text>
                     <View className="flex-row gap-2">
                       <TextInput
-                        className="flex-1 border border-gray-300 rounded-lg p-3 text-base bg-white"
+                        className="flex-1 bg-gray-50 rounded-xl p-4 text-base"
                         placeholder="Enter amount"
+                        placeholderTextColor="#999"
                         value={customAmount}
                         onChangeText={setCustomAmount}
                         keyboardType="number-pad"
                       />
                       <TouchableOpacity
-                        className="px-4 py-3 bg-primary rounded-lg items-center justify-center"
+                        className="px-4 py-3 rounded-xl items-center justify-center"
+                        style={{ backgroundColor: '#90CDF4' }}
                         onPress={handleCustomAdd}
                         disabled={loading}
-                        activeOpacity={0.8}
+                        activeOpacity={0.7}
                       >
-                        <Text className="text-white font-semibold">Add</Text>
+                        <Text className="text-white font-bold">Add</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        className="px-4 py-3 bg-gray-300 rounded-lg items-center justify-center"
+                        className="px-4 py-3 rounded-xl items-center justify-center bg-gray-200"
                         onPress={() => {
                           setShowCustomInput(false);
                           setCustomAmount('');
                         }}
-                        activeOpacity={0.8}
+                        activeOpacity={0.7}
                       >
-                        <Text className="text-gray-700 font-semibold">Cancel</Text>
+                        <Text className="text-gray-700 font-bold">Cancel</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
                 ) : (
                   <TouchableOpacity
-                    className="py-4 bg-gray-50 border-2 border-gray-300 rounded-xl items-center mb-6"
+                    className="py-4 bg-gray-50 rounded-xl items-center mb-6"
                     onPress={() => setShowCustomInput(true)}
-                    activeOpacity={0.8}
+                    activeOpacity={0.7}
                   >
-                    <Text className="text-primary text-base font-semibold">Add Custom Amount</Text>
+                    <Text className="text-base font-semibold" style={{ color: '#90CDF4' }}>Add Custom Amount</Text>
                   </TouchableOpacity>
                 )}
 
@@ -518,8 +590,8 @@ const WaterIntakeScreen = ({ navigation }) => {
                   const logDate = startOfDay(new Date(log.recorded_at));
                   return logDate.getTime() === startOfDay(new Date()).getTime();
                 }).length > 0 && (
-                  <View className="pt-6 border-t border-gray-300">
-                    <Text className="text-lg font-semibold text-gray-800 mb-4">Today's Intake</Text>
+                  <View className="pt-6 border-t border-gray-200">
+                    <Text className="text-lg font-bold text-gray-900 mb-4">Today's Intake</Text>
                     {intakeHistory
                       .filter(log => {
                         const logDate = startOfDay(new Date(log.recorded_at));
@@ -529,8 +601,8 @@ const WaterIntakeScreen = ({ navigation }) => {
                       .map((log, index) => {
                         const data = typeof log.data === 'string' ? JSON.parse(log.data) : log.data;
                         return (
-                          <View key={log.id || index} className="flex-row justify-between items-center p-3 bg-gray-50 rounded-lg mb-2">
-                            <Text className="text-base font-semibold text-gray-800">+{data.amount}ml</Text>
+                          <View key={log.id || index} className="flex-row justify-between items-center bg-white rounded-xl p-4 mb-2">
+                            <Text className="text-base font-semibold text-gray-900">+{data.amount}ml</Text>
                             <Text className="text-sm text-gray-600">
                               {format(parseISO(log.recorded_at), 'HH:mm')}
                             </Text>
@@ -550,16 +622,18 @@ const WaterIntakeScreen = ({ navigation }) => {
                   <TouchableOpacity
                     className="px-4 py-2 bg-gray-100 rounded-lg"
                     onPress={() => setSelectedWeek(selectedWeek + 1)}
+                    activeOpacity={0.7}
                   >
                     <Text className="text-gray-700 font-medium">← Prev Week</Text>
                   </TouchableOpacity>
-                  <Text className="text-base font-semibold text-gray-800">
+                  <Text className="text-base font-semibold text-gray-900">
                     {selectedWeek === 0 ? 'This Week' : selectedWeek === -1 ? 'Last Week' : `${Math.abs(selectedWeek)} weeks ago`}
                   </Text>
                   <TouchableOpacity
                     className="px-4 py-2 bg-gray-100 rounded-lg"
                     onPress={() => setSelectedWeek(Math.max(selectedWeek - 1, 0))}
                     disabled={selectedWeek === 0}
+                    activeOpacity={0.7}
                   >
                     <Text className={`font-medium ${selectedWeek === 0 ? 'text-gray-400' : 'text-gray-700'}`}>
                       Next Week →
@@ -569,8 +643,8 @@ const WaterIntakeScreen = ({ navigation }) => {
 
                 {/* Weekly Chart */}
                 {weeklyChartData.labels.length > 0 && (
-                  <View className="mb-6">
-                    <Text className="text-base font-semibold text-gray-800 mb-3 px-1">
+                  <View className="mb-6 bg-white rounded-xl p-4">
+                    <Text className="text-base font-semibold text-gray-900 mb-3">
                       Weekly Intake (ml)
                     </Text>
                     <LineChart
@@ -578,20 +652,20 @@ const WaterIntakeScreen = ({ navigation }) => {
                         labels: weeklyChartData.labels,
                         datasets: weeklyChartData.datasets,
                       }}
-                      width={screenWidth - 48}
+                      width={screenWidth - 80}
                       height={220}
                       chartConfig={{
                         backgroundColor: '#ffffff',
                         backgroundGradientFrom: '#ffffff',
                         backgroundGradientTo: '#ffffff',
                         decimalPlaces: 0,
-                        color: (opacity = 1) => `rgba(66, 133, 244, ${opacity})`,
+                        color: (opacity = 1) => `rgba(144, 205, 244, ${opacity})`,
                         labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
                         style: { borderRadius: 16 },
                         propsForDots: {
                           r: '4',
                           strokeWidth: '2',
-                          stroke: '#4285F4',
+                          stroke: '#90CDF4',
                         },
                       }}
                       bezier
@@ -605,20 +679,20 @@ const WaterIntakeScreen = ({ navigation }) => {
 
                 {/* Daily Chart (Last 14 days) */}
                 {dailyChartData.labels.length > 0 && (
-                  <View className="mb-6">
-                    <Text className="text-base font-semibold text-gray-800 mb-3 px-1">
+                  <View className="mb-6 bg-white rounded-xl p-4">
+                    <Text className="text-base font-semibold text-gray-900 mb-3">
                       Daily Intake - Last 14 Days (ml)
                     </Text>
                     <BarChart
                       data={dailyChartData}
-                      width={screenWidth - 48}
+                      width={screenWidth - 80}
                       height={220}
                       chartConfig={{
                         backgroundColor: '#ffffff',
                         backgroundGradientFrom: '#ffffff',
                         backgroundGradientTo: '#ffffff',
                         decimalPlaces: 0,
-                        color: (opacity = 1) => `rgba(52, 168, 83, ${opacity})`,
+                        color: (opacity = 1) => `rgba(144, 205, 244, ${opacity})`,
                         labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
                         style: { borderRadius: 16 },
                       }}
@@ -631,14 +705,17 @@ const WaterIntakeScreen = ({ navigation }) => {
                 )}
 
                 {/* Weekly Data Table */}
-                <View className="mb-6 pt-6 border-t border-gray-300">
-                  <Text className="text-lg font-semibold text-gray-800 mb-4">Weekly Breakdown</Text>
+                <View className="mb-6 pt-6 border-t border-gray-200">
+                  <Text className="text-lg font-bold text-gray-900 mb-4">Weekly Breakdown</Text>
                   {weeklyData.map((day, index) => (
-                    <View key={index} className={`p-3 rounded-lg mb-2 flex-row justify-between items-center ${
-                      day.achieved ? 'bg-green-50 border border-green-200' : 'bg-gray-50'
-                    }`}>
+                    <View 
+                      key={index} 
+                      className={`p-4 rounded-xl mb-2 flex-row justify-between items-center ${
+                        day.achieved ? 'bg-green-50' : 'bg-white'
+                      }`}
+                    >
                       <View className="flex-1">
-                        <Text className="text-base font-medium text-gray-800">
+                        <Text className="text-base font-medium text-gray-900">
                           {format(day.date, 'EEEE, MMM d')}
                         </Text>
                         <Text className="text-sm text-gray-600">
@@ -661,7 +738,7 @@ const WaterIntakeScreen = ({ navigation }) => {
             {/* Milestones Tab */}
             {activeTab === 'milestones' && (
               <>
-                <Text className="text-base font-semibold text-gray-800 mb-4">
+                <Text className="text-base font-semibold text-gray-900 mb-4">
                   Your Achievements 🎉
                 </Text>
                 {milestones.length === 0 ? (
@@ -674,16 +751,16 @@ const WaterIntakeScreen = ({ navigation }) => {
                   milestones.map((milestone, index) => (
                     <View
                       key={index}
-                      className={`p-4 rounded-lg mb-4 border-2 ${
+                      className={`p-4 rounded-xl mb-4 ${
                         milestone.achieved
-                          ? 'bg-yellow-50 border-yellow-300'
-                          : 'bg-gray-50 border-gray-200'
+                          ? 'bg-yellow-50'
+                          : 'bg-white'
                       }`}
                     >
                       <View className="flex-row items-center mb-2">
                         <Text className="text-3xl mr-3">{milestone.icon}</Text>
                         <View className="flex-1">
-                          <Text className="text-lg font-bold text-gray-800">
+                          <Text className="text-lg font-bold text-gray-900">
                             {milestone.title}
                           </Text>
                           <Text className="text-sm text-gray-600 mt-1">
@@ -701,25 +778,29 @@ const WaterIntakeScreen = ({ navigation }) => {
                 )}
 
                 {/* Goal Setting */}
-                <View className="mt-6 pt-6 border-t border-gray-300">
-                  <Text className="text-base font-semibold text-gray-800 mb-3">Daily Goal (ml)</Text>
+                <View className="mt-6 pt-6 border-t border-gray-200">
+                  <Text className="text-base font-semibold text-gray-900 mb-3">Daily Goal (ml)</Text>
                   <View className="flex-row gap-2">
                     {[1500, 2000, 2500, 3000].map((goal) => (
                       <TouchableOpacity
                         key={goal}
-                        className={`flex-1 py-3 px-4 rounded-lg border items-center ${
-                          dailyGoal === goal
-                            ? 'bg-primary border-primary'
-                            : 'bg-gray-50 border-gray-300'
-                        }`}
+                        className="flex-1 py-3 px-4 rounded-lg items-center"
+                        style={{
+                          backgroundColor: dailyGoal === goal ? '#90CDF4' : '#F5F5F5',
+                        }}
                         onPress={async () => {
                           setDailyGoal(goal);
                           await AsyncStorage.setItem('waterIntakeGoal', goal.toString());
                         }}
+                        activeOpacity={0.7}
                       >
-                        <Text className={`text-sm font-medium ${
-                          dailyGoal === goal ? 'text-white' : 'text-gray-600'
-                        }`}>
+                        <Text 
+                          className="text-sm font-medium"
+                          style={{
+                            color: dailyGoal === goal ? '#fff' : '#666',
+                            fontWeight: dailyGoal === goal ? '600' : '500',
+                          }}
+                        >
                           {goal}ml
                         </Text>
                       </TouchableOpacity>

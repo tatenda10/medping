@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, Platform } from 'react-native';
 import { NavigationContainer, CommonActions } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -10,7 +10,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNotificationHandler } from '../hooks/useNotificationHandler';
 import { navigationRef } from './navigationRef';
 import CreateAccountPrompt from '../components/CreateAccountPrompt';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../context/ClerkAuthContext';
+import { useAuth as useClerkAuth, useUser } from '@clerk/clerk-expo';
 import databaseService from '../services/databaseService';
 
 
@@ -39,8 +40,8 @@ import AppointmentsScreen from '../screens/AppointmentsScreen';
 
 // Components
 import DrawerContent from '../components/DrawerContent';
-import FloatingActionButton from '../components/FloatingActionButton';
 import AppHeader from '../components/AppHeader';
+import CustomTabBar from '../components/CustomTabBar';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -72,29 +73,17 @@ const MainTabs = ({ navigation, onLogout }) => {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1 }} edges={['bottom']}>
+    <View style={{ flex: 1 }}>
       <Tab.Navigator
+        tabBar={(props) => <CustomTabBar {...props} />}
         screenOptions={{
           headerShown: false,
-          tabBarActiveTintColor: '#4285F4',
-          tabBarInactiveTintColor: '#999',
-          tabBarStyle: {
-            height: 80,
-            paddingBottom: 12,
-            paddingTop: 12,
-            borderTopWidth: 1,
-            borderTopColor: '#e0e0e0',
-            borderRadius: 0,
-          },
         }}
       >
         <Tab.Screen
           name="Dashboard"
           options={{
-            tabBarLabel: 'Dashboard',
-            tabBarIcon: ({ color, size }) => (
-              <MaterialIcons name="dashboard" size={size} color={color} />
-            ),
+            tabBarButton: () => null, // Hide from default tab bar, handled by CustomTabBar
           }}
         >
           {() => <DashboardScreenWithHeader navigation={navigation} />}
@@ -102,10 +91,7 @@ const MainTabs = ({ navigation, onLogout }) => {
         <Tab.Screen
           name="Calendar"
           options={{
-            tabBarLabel: 'Calendar',
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="calendar-outline" size={size} color={color} />
-            ),
+            tabBarButton: () => null, // Hide from default tab bar, handled by CustomTabBar
           }}
           listeners={{
             tabPress: (e) => {
@@ -134,10 +120,7 @@ const MainTabs = ({ navigation, onLogout }) => {
         <Tab.Screen
           name="Metrics"
           options={{
-            tabBarLabel: 'Metrics',
-            tabBarIcon: ({ color, size }) => (
-              <MaterialIcons name="analytics" size={size} color={color} />
-            ),
+            tabBarButton: () => null, // Hide from default tab bar, handled by CustomTabBar
           }}
           listeners={{
             tabPress: (e) => {
@@ -166,48 +149,9 @@ const MainTabs = ({ navigation, onLogout }) => {
           }}
         </Tab.Screen>
         <Tab.Screen
-          name="ProfileTab"
-          options={{
-            tabBarLabel: 'Profile',
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="person-circle-outline" size={size} color={color} />
-            ),
-          }}
-          listeners={{
-            tabPress: (e) => {
-              handleTabPress(
-                'ProfileTab',
-                'Create an account to view and edit your profile.',
-                () => e.preventDefault()
-              );
-            },
-            beforeRemove: (e) => {
-              if (!isAuthSync()) {
-                e.preventDefault();
-              }
-            },
-          }}
-        >
-          {({ navigation }) => {
-            if (!isAuthSync() && !isAuthenticated) {
-              return null;
-            }
-            return (
-              <ProfileScreen 
-                navigation={navigation}
-                userToken={authToken} 
-                onLogout={onLogout} 
-              />
-            );
-          }}
-        </Tab.Screen>
-        <Tab.Screen
           name="Settings"
           options={{
-            tabBarLabel: 'Settings',
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="settings-outline" size={size} color={color} />
-            ),
+            tabBarButton: () => null, // Hide from default tab bar, handled by CustomTabBar
           }}
           listeners={{
             tabPress: (e) => {
@@ -239,42 +183,15 @@ const MainTabs = ({ navigation, onLogout }) => {
         onClose={() => setShowCreateAccountPrompt(false)}
         message={promptMessage}
       />
-    </SafeAreaView>
+    </View>
   );
 };
 
 // Dashboard with header
 const DashboardScreenWithHeader = ({ navigation }) => {
-  const { isAuthenticated, isAuthSync, refreshAuth } = useAuth();
-  const [showCreateAccountPrompt, setShowCreateAccountPrompt] = React.useState(false);
-
-  // Refresh auth when component mounts or becomes focused
-  React.useEffect(() => {
-    refreshAuth();
-  }, []);
-
-  const handleAddMedicine = () => {
-    // Use isAuthenticated as primary check (most reliable)
-    // isAuthSync() as fallback for immediate response
-    if (isAuthenticated || isAuthSync()) {
-      navigation.navigate('AddMedicine');
-    } else {
-      setShowCreateAccountPrompt(true);
-    }
-  };
-
   return (
     <View style={{ flex: 1 }}>
-      <AppHeader navigation={navigation} />
       <DashboardScreen />
-      <FloatingActionButton onPress={handleAddMedicine} />
-      {showCreateAccountPrompt && (
-        <CreateAccountPrompt
-          visible={showCreateAccountPrompt}
-          onClose={() => setShowCreateAccountPrompt(false)}
-          message="Create an account to add medications and sync them across devices."
-        />
-      )}
     </View>
   );
 };
@@ -378,97 +295,246 @@ const DrawerNavigator = ({ onLogout }) => {
 };
 
 const AppNavigator = () => {
-  const { isAuthenticated, authToken, updateAuth, refreshAuth } = useAuth();
+  const { isAuthenticated, isLoaded, userId, user } = useAuth();
+  const { signOut, isSignedIn } = useClerkAuth();
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    checkAuthStatus();
-  }, []);
-
-  // Re-check auth status periodically (when app comes to foreground)
-  useEffect(() => {
-    const interval = setInterval(() => {
+    console.log('🔄 Auth state changed - isLoaded:', isLoaded, 'isAuthenticated:', isAuthenticated, 'userId:', userId, 'isSignedIn:', isSignedIn);
+    if (isLoaded) {
       checkAuthStatus();
-    }, 2000); // Check every 2 seconds
-    
-    return () => clearInterval(interval);
-  }, []);
+    }
+  }, [isLoaded, isAuthenticated, userId, isSignedIn]);
+
+  // Separate effect to handle navigation when auth state changes and user is authenticated
+  useEffect(() => {
+    if (isLoaded && isAuthenticated && userId && !isLoading) {
+      console.log('🚀 User authenticated, checking navigation...', 'needsOnboarding:', needsOnboarding);
+      
+      // Check if user has data - if so, they should go to MainApp regardless of onboarding flag
+      const checkAndNavigate = async () => {
+        const hasData = await onboardingService.hasAnyMedications(userId);
+        const shouldShowMainApp = !needsOnboarding || hasData;
+        
+        if (navigationRef.current?.isReady()) {
+          // Wait a bit for state to settle
+          setTimeout(() => {
+            const currentRoute = navigationRef.current?.getCurrentRoute();
+            console.log('📍 Current route:', currentRoute?.name);
+            
+            // If we're on Login, SignUp, Welcome, or Onboarding screens but user is authenticated with data, go to MainApp
+            if ((currentRoute?.name === 'Login' || currentRoute?.name === 'SignUp' || 
+                 currentRoute?.name === 'Welcome' || currentRoute?.name === 'Onboarding' ||
+                 currentRoute?.name === 'AddFirstMedication') && shouldShowMainApp) {
+              console.log('🔄 Navigating away from', currentRoute.name, 'to MainApp (user has data)');
+              navigationRef.current?.dispatch(
+                CommonActions.reset({
+                  index: 0,
+                  routes: [{ name: 'MainApp' }],
+                })
+              );
+            } else if (currentRoute?.name === 'Login' || currentRoute?.name === 'SignUp') {
+              // If on login/signup but should show onboarding
+              if (needsOnboarding && !hasData) {
+                console.log('📝 Navigating to Onboarding');
+                navigationRef.current?.dispatch(
+                  CommonActions.reset({
+                    index: 0,
+                    routes: [{ name: 'Onboarding' }],
+                  })
+                );
+              }
+            } else if (currentRoute?.name === 'Splash') {
+              // If on splash screen and authenticated, navigate appropriately
+              console.log('🔄 Navigating from Splash to appropriate screen');
+              if (shouldShowMainApp) {
+                navigationRef.current?.dispatch(
+                  CommonActions.reset({
+                    index: 0,
+                    routes: [{ name: 'MainApp' }],
+                  })
+                );
+              } else {
+                navigationRef.current?.navigate('Onboarding');
+              }
+            }
+          }, 300);
+        }
+      };
+      
+      checkAndNavigate();
+    }
+  }, [isLoaded, isAuthenticated, userId, isLoading, needsOnboarding]);
+
+  // Effect to handle navigation when needsOnboarding changes (e.g., after logout)
+  // Only trigger when user is NOT authenticated (after logout)
+  useEffect(() => {
+    if (!isLoading && needsOnboarding && !isAuthenticated && !userId && navigationRef.current?.isReady()) {
+      // Wait a bit for the navigation stack to update
+      setTimeout(() => {
+        const currentRoute = navigationRef.current?.getCurrentRoute();
+        // Only navigate if we're not already on Onboarding or Welcome, and user is not authenticated
+        if (currentRoute?.name !== 'Onboarding' && currentRoute?.name !== 'Welcome' && currentRoute?.name !== 'Splash') {
+          console.log('🔄 needsOnboarding changed (user logged out), navigating to Onboarding/Welcome');
+          try {
+            navigationRef.current.dispatch(
+              CommonActions.reset({
+                index: 0,
+                routes: [{ name: 'Onboarding' }],
+              })
+            );
+          } catch (error) {
+            console.error('❌ Error navigating to Onboarding:', error);
+          }
+        }
+      }, 100);
+    }
+  }, [needsOnboarding, isLoading, isAuthenticated, userId]);
 
   const checkAuthStatus = async () => {
     try {
-      // Refresh auth from context (uses cache for speed)
-      await refreshAuth();
+      console.log('🔍 checkAuthStatus called - isLoaded:', isLoaded, 'isAuthenticated:', isAuthenticated, 'userId:', userId);
       
-      const userData = await AsyncStorage.getItem('userData');
-      const parsedUserData = userData ? JSON.parse(userData) : null;
-      const userId = parsedUserData?.id || parsedUserData?.user?.id || null;
+      if (!isLoaded) {
+        console.log('⏳ Waiting for Clerk to load...');
+        return; // Wait for Clerk to load
+      }
+
+      // Check if onboarding is completed first
+      const completed = await onboardingService.hasCompletedOnboarding();
+      console.log('📋 Onboarding completed:', completed);
       
-      // Check if there's any data (medications) - this is the key check
-      const hasData = await onboardingService.hasAnyMedications(userId);
+      // Check if there's any data (medications) - for guest users or if onboarding not completed
+      const hasData = await onboardingService.hasAnyMedications(userId || null);
+      console.log('💊 Has medications data:', hasData, 'for userId:', userId);
       
-      // If no data exists, always show onboarding (Get Started page)
-      if (!hasData) {
+      // If user is authenticated AND has data, always show MainApp (skip onboarding)
+      // Even if onboarding flag is not set, if they have medications, they've already set up the app
+      if (isAuthenticated && userId && hasData) {
+        console.log('✅ User authenticated with data - showing MainApp (skipping onboarding)');
+        setNeedsOnboarding(false);
+        setIsLoading(false);
+        // Ensure we navigate to MainApp
+        setTimeout(() => {
+          if (navigationRef.current?.isReady()) {
+            const currentRoute = navigationRef.current?.getCurrentRoute();
+            if (currentRoute?.name !== 'MainApp') {
+              navigationRef.current.dispatch(
+                CommonActions.reset({
+                  index: 0,
+                  routes: [{ name: 'MainApp' }],
+                })
+              );
+            }
+          }
+        }, 100);
+        return;
+      }
+      
+      // If user is authenticated AND onboarding is completed, show MainApp
+      if (isAuthenticated && userId && completed) {
+        console.log('✅ User authenticated with completed onboarding - showing MainApp');
+        setNeedsOnboarding(false);
+        setIsLoading(false);
+        // Ensure we navigate to MainApp
+        setTimeout(() => {
+          if (navigationRef.current?.isReady()) {
+            const currentRoute = navigationRef.current?.getCurrentRoute();
+            if (currentRoute?.name !== 'MainApp') {
+              navigationRef.current.dispatch(
+                CommonActions.reset({
+                  index: 0,
+                  routes: [{ name: 'MainApp' }],
+                })
+              );
+            }
+          }
+        }, 100);
+        return;
+      }
+      
+      // If user is not authenticated AND has no data, show onboarding/login
+      if (!isAuthenticated && !userId && !hasData) {
+        console.log('🔒 User not authenticated and no data - showing onboarding/login');
+        setNeedsOnboarding(true);
+        setIsLoading(false);
+        return;
+      }
+      
+      // If no data exists AND onboarding not completed, show onboarding
+      if (!hasData && !completed) {
+        console.log('📝 No data and onboarding not completed - showing onboarding');
         setNeedsOnboarding(true);
         setIsLoading(false);
         return;
       }
       
       // If data exists, check if onboarding is completed
-      const completed = await onboardingService.hasCompletedOnboarding();
-      
-      if (authToken && userData) {
-        // Authenticated user with data - show MainApp if onboarding completed
-        setNeedsOnboarding(!completed);
+      if (isAuthenticated && userId) {
+        // Authenticated user with data - should have been handled above
+        // This is a fallback
+        console.log('✅ Authenticated user - needsOnboarding: false (has data)');
+        setNeedsOnboarding(false);
+        setIsLoading(false);
       } else {
-        // No token but has data (guest mode) - show MainApp if onboarding completed
+        // No auth but has data (guest mode) - show MainApp if onboarding completed
         if (completed) {
+          console.log('✅ Guest with completed onboarding - showing MainApp');
           setNeedsOnboarding(false); // Onboarding done, show MainApp
         } else {
           // Has data but onboarding not completed - show onboarding
+          console.log('📝 Guest with data but onboarding not completed - showing onboarding');
           setNeedsOnboarding(true);
         }
       }
     } catch (error) {
-      console.error('Error checking auth status:', error);
-      // On error, default to showing onboarding
-      setNeedsOnboarding(true);
+      console.error('❌ Error checking auth status:', error);
+      // On error, default to showing onboarding only if not authenticated
+      setNeedsOnboarding(!isAuthenticated);
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleLoginSuccess = async () => {
-    const token = await AsyncStorage.getItem('authToken');
-    const userData = await AsyncStorage.getItem('userData');
+    console.log('🟢 handleLoginSuccess called');
+    console.log('🟢 Current auth state - isAuthenticated:', isAuthenticated, 'userId:', userId);
     
-    // Update auth context (updates cache immediately)
-    if (token) {
-      await updateAuth(token);
-    }
+    // Wait for Clerk to fully update state
+    await new Promise(resolve => setTimeout(resolve, 1000));
     
-    // Check if onboarding is completed
-    const completed = await onboardingService.hasCompletedOnboarding();
-    setNeedsOnboarding(!completed);
+    // Force a re-check of auth status
+    // The useEffect will also trigger when isAuthenticated/userId changes
+    // but we force a check here to ensure immediate update
+    await checkAuthStatus();
     
-    // Reset navigation to MainApp if onboarding is complete
-    if (completed && navigationRef.current?.isReady()) {
-      setTimeout(() => {
-        navigationRef.current?.dispatch(
-          CommonActions.reset({
-            index: 0,
-            routes: [{ name: 'MainApp' }],
-          })
-        );
-      }, 100);
+    // If user is authenticated and we have userId, ensure we're not showing onboarding
+    // unless they truly need it (no data and onboarding not completed)
+    if (isAuthenticated && userId) {
+      const hasData = await onboardingService.hasAnyMedications(userId);
+      const completed = await onboardingService.hasCompletedOnboarding();
+      
+      if (hasData || completed) {
+        setNeedsOnboarding(false);
+        setIsLoading(false);
+        
+        // Force navigation to MainApp
+        if (navigationRef.current?.isReady()) {
+          navigationRef.current?.dispatch(
+            CommonActions.reset({
+              index: 0,
+              routes: [{ name: 'MainApp' }],
+            })
+          );
+        }
+      }
     }
   };
 
-  const handleSignUpSuccess = async (user, token) => {
-    // Update auth context (updates cache immediately)
-    if (token) {
-      await updateAuth(token);
-    }
+  const handleSignUpSuccess = async () => {
+    // Wait a bit for Clerk to update state
+    await new Promise(resolve => setTimeout(resolve, 500));
     
     // Onboarding is completed after signup (migration happens in SignUpScreen)
     setNeedsOnboarding(false);
@@ -493,14 +559,10 @@ const AppNavigator = () => {
   const handleLogout = async () => {
     console.log('🔴 AppNavigator handleLogout called');
     try {
-      // Clear auth data
-      console.log('🔴 Clearing userData...');
-      await AsyncStorage.removeItem('userData');
-      console.log('🔴 Clearing authToken...');
-      await AsyncStorage.removeItem('authToken');
-      console.log('🔴 Updating auth context...');
-      await updateAuth(null); // This clears auth token and updates context
-      console.log('🔴 Auth context updated');
+      // Sign out from Clerk first
+      console.log('🔴 Signing out from Clerk...');
+      await signOut();
+      console.log('✅ Signed out from Clerk');
       
       // Clear all guest data from database
       console.log('🔴 Clearing guest data from database...');
@@ -556,35 +618,14 @@ const AppNavigator = () => {
       ]);
       console.log('✅ Onboarding data cleared');
       
-      // Navigate to Login screen first
-      if (navigationRef.current?.isReady()) {
-        console.log('🔴 Navigating to Login screen...');
-        try {
-          // Try to navigate first
-          navigationRef.current.navigate('Login');
-          console.log('🔴 Navigated to Login');
-          
-          // Then reset the navigation stack after a short delay
-          setTimeout(() => {
-            console.log('🔴 Resetting navigation stack...');
-            navigationRef.current.dispatch(
-              CommonActions.reset({
-                index: 0,
-                routes: [{ name: 'Login' }],
-              })
-            );
-            console.log('🔴 Navigation stack reset');
-          }, 200);
-        } catch (navError) {
-          console.error('❌ Navigation error during logout:', navError);
-          // Fallback: set needsOnboarding to trigger re-render
-          console.log('🔴 Using fallback: setting needsOnboarding to true');
-          setNeedsOnboarding(true);
-        }
-      } else {
-        console.warn('⚠️ Navigation ref not ready, setting needsOnboarding to true');
-        setNeedsOnboarding(true);
-      }
+      // Don't manually set needsOnboarding - let checkAuthStatus determine it
+      // After logout, user is not authenticated, so checkAuthStatus will show onboarding
+      setIsLoading(false);
+      
+      // Wait for Clerk state to update, then checkAuthStatus will determine navigation
+      setTimeout(() => {
+        checkAuthStatus();
+      }, 300);
     } catch (error) {
       console.error('❌ Error logging out:', error);
     }

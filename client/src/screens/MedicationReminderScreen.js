@@ -9,11 +9,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Audio } from 'expo-av';
-import axios from 'axios';
-import BASE_URL from '../context/Api';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { clerkAxios } from '../utils/clerkAxios';
 import databaseService from '../services/databaseService';
 import syncService from '../services/syncService';
+import { useAuth } from '../context/ClerkAuthContext';
 
 // Simple ID generator for React Native
 const generateId = () => {
@@ -21,6 +20,7 @@ const generateId = () => {
 };
 
 const MedicationReminderScreen = ({ route, navigation }) => {
+  const { userId, isAuthenticated } = useAuth();
   const { medicationId, medicationName, dosage, time, date } = route.params || {};
   const [sound, setSound] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -93,41 +93,39 @@ const MedicationReminderScreen = ({ route, navigation }) => {
     await stopRingtone();
 
     try {
-      const userData = await AsyncStorage.getItem('userData');
-      const user = userData ? JSON.parse(userData) : null;
-      const userId = user?.id || user?.user?.id;
+      const currentUserId = userId || 'guest';
       const scheduledTime = new Date(date);
 
       if (action === 'taken' || action === 'missed') {
         // Save to local database first (offline-first)
         const doseLog = {
           id: generateId(),
-          user_id: userId,
+          user_id: currentUserId,
           medication_id: medicationId,
           scheduled_time: scheduledTime.toISOString(),
           status: action,
           taken_time: action === 'taken' ? new Date().toISOString() : null,
         };
 
-        await databaseService.saveDoseLog(doseLog);
+        if (Platform.OS !== 'web') {
+          await databaseService.saveDoseLog(doseLog);
+        }
 
-        // Try to sync to server (if online)
+        // Try to sync to server (if online and authenticated)
         const online = await syncService.isOnline();
-        if (online) {
+        if (online && isAuthenticated) {
           try {
-            const token = await AsyncStorage.getItem('authToken');
-            await axios.post(
-              `${BASE_URL}/dose-logs`,
+            await clerkAxios.post(
+              '/dose-logs',
               {
                 medication_id: medicationId,
                 scheduled_time: scheduledTime.toISOString(),
                 status: action,
-              },
-              {
-                headers: { 'Authorization': `Bearer ${token}` },
               }
             );
-            await databaseService.markDoseLogSynced(doseLog.id);
+            if (Platform.OS !== 'web') {
+              await databaseService.markDoseLogSynced(doseLog.id);
+            }
           } catch (error) {
             console.log('📴 Offline or server error - saved locally, will sync later');
           }
@@ -149,12 +147,8 @@ const MedicationReminderScreen = ({ route, navigation }) => {
     await stopRingtone();
 
     try {
-      const token = await AsyncStorage.getItem('authToken');
-      
       // Fetch medication details
-      const response = await axios.get(`${BASE_URL}/medications/${medicationId}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
+      const response = await clerkAxios.get(`/medications/${medicationId}`);
 
       if (response.data.success) {
         const medication = response.data.medication;
@@ -181,6 +175,16 @@ const MedicationReminderScreen = ({ route, navigation }) => {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      {/* Header with X button */}
+      <View style={styles.header}>
+        <TouchableOpacity 
+          onPress={() => navigation.goBack()} 
+          style={styles.closeButton}
+        >
+          <Text style={styles.closeButtonText}>✕</Text>
+        </TouchableOpacity>
+      </View>
+      
       <View style={styles.content}>
         {/* Medication Info */}
         <View style={styles.medicationInfo}>
@@ -252,6 +256,26 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 10,
+  },
+  closeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeButtonText: {
+    fontSize: 20,
+    color: '#666',
+    fontWeight: 'bold',
   },
   content: {
     flex: 1,

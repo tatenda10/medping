@@ -1,12 +1,23 @@
 import React, { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
+import { ClerkProvider } from '@clerk/clerk-expo';
 import AppNavigator from './src/navigation/AppNavigator';
 import notificationService from './src/services/notificationService';
 import databaseService from './src/services/databaseService';
 import syncService from './src/services/syncService';
+import backgroundTaskService from './src/services/backgroundTaskService';
 import firebaseService from './src/services/firebaseService';
-import { AuthProvider } from './src/context/AuthContext';
+import { ClerkAuthProvider } from './src/context/ClerkAuthContext';
+import { setClerkTokenGetter } from './src/utils/clerkAxios';
 import "./global.css"
+
+// Get Clerk publishable key from environment variables
+// You'll need to add EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY to your .env file
+const clerkPublishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
+if (!clerkPublishableKey) {
+  console.warn('⚠️ EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY is not set. Clerk authentication will not work.');
+}
 
 export default function App() {
   useEffect(() => {
@@ -25,6 +36,9 @@ export default function App() {
       // Ensure database is initialized before starting sync
       await databaseService.ensureInitialized();
 
+      // Register background task for notifications and missed dose checking
+      await backgroundTaskService.registerBackgroundTask();
+
       // Start auto-sync (only after database is ready)
       syncService.startAutoSync();
 
@@ -40,14 +54,23 @@ export default function App() {
     // Cleanup on unmount
     return () => {
       syncService.stopAutoSync();
+      // Note: We don't unregister background task on unmount
+      // as it should continue running when app is closed
     };
   }, []);
 
   return (
-    <AuthProvider>
-      <AppNavigator />
-      <StatusBar style="auto" />
-    </AuthProvider>
+    <ClerkProvider 
+      publishableKey={clerkPublishableKey}
+      // Configure OAuth redirect URLs for Expo
+      afterSignInUrl="mediping://"
+      afterSignUpUrl="mediping://"
+    >
+      <ClerkAuthProvider>
+        <AppNavigator />
+        <StatusBar style="auto" />
+      </ClerkAuthProvider>
+    </ClerkProvider>
   );
 }
 

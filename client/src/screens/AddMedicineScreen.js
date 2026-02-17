@@ -13,36 +13,29 @@ import {
   Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as ImagePicker from 'expo-image-picker';
-import axios from 'axios';
-import BASE_URL from '../context/Api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { clerkAxios } from '../utils/clerkAxios';
 import notificationService from '../services/notificationService';
 import databaseService from '../services/databaseService';
 import syncService from '../services/syncService';
 import { MEDICATION_TYPES, getMedicationIcon } from '../utils/medicationIcons';
 import { format, addDays, eachDayOfInterval, startOfDay } from 'date-fns';
-import { useAuthCheck } from '../hooks/useAuthCheck';
-import CreateAccountPrompt from '../components/CreateAccountPrompt';
+import { useAuth } from '../context/ClerkAuthContext';
 // Simple ID generator for React Native
 const generateId = () => {
   return `med_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 };
 
 const AddMedicineScreen = ({ navigation }) => {
-  const { isAuthenticated } = useAuthCheck();
-  const [showCreateAccountPrompt, setShowCreateAccountPrompt] = useState(false);
+  const { userId } = useAuth();
   const [loading, setLoading] = useState(false);
   const scrollViewRef = useRef(null);
   const quantityRemainingYRef = useRef(0);
   const lowStockYRef = useRef(0);
 
-  useEffect(() => {
-    if (!isAuthenticated) {
-      setShowCreateAccountPrompt(true);
-    }
-  }, [isAuthenticated]);
 
   // Helper function to scroll to a position
   const scrollToPosition = (y) => {
@@ -156,16 +149,8 @@ const AddMedicineScreen = ({ navigation }) => {
 
     setLoading(true);
     try {
-      const token = await AsyncStorage.getItem('authToken');
-      const userData = await AsyncStorage.getItem('userData');
-      const user = userData ? JSON.parse(userData) : null;
-      const userId = user?.id || user?.user?.id;
-      
-      if (!userId) {
-        Alert.alert('Error', 'User not found. Please login again.');
-        setLoading(false);
-        return;
-      }
+      // Use Clerk userId if authenticated, otherwise use 'guest'
+      const currentUserId = userId || 'guest';
       
       // Format times for API
       const formattedTimes = timesOfDay.map(time => formatTime(time));
@@ -179,7 +164,7 @@ const AddMedicineScreen = ({ navigation }) => {
 
       const medicationData = {
         id: medicationId,
-        user_id: userId,
+        user_id: currentUserId,
         name: name.trim(),
         dosage: dosage.trim(),
         frequency: frequency,
@@ -226,19 +211,11 @@ const AddMedicineScreen = ({ navigation }) => {
         // Don't throw - medication is saved, notifications can be scheduled later
       }
 
-      // Try to sync to server (if online)
+      // Try to sync to server (if online and authenticated)
       const online = await syncService.isOnline();
-      if (online) {
+      if (online && userId) {
         try {
-          const response = await axios.post(
-            `${BASE_URL}/medications`,
-            medicationData,
-            {
-              headers: {
-                'Authorization': `Bearer ${token}`,
-              },
-            }
-          );
+          const response = await clerkAxios.post('/medications', medicationData);
 
           if (response.data.success) {
             // Update local record with server data (skip on web)
@@ -254,6 +231,8 @@ const AddMedicineScreen = ({ navigation }) => {
         } catch (error) {
           console.log('📴 Offline or server error - saved locally, will sync later');
         }
+      } else if (!userId) {
+        console.log('👤 Guest mode - medication saved locally only');
       }
 
       // Clear form for adding another medication
@@ -301,31 +280,20 @@ const AddMedicineScreen = ({ navigation }) => {
     }
   };
 
-  if (!isAuthenticated) {
-    return (
-      <SafeAreaView className="flex-1 bg-white">
-        <CreateAccountPrompt
-          visible={showCreateAccountPrompt}
-          onClose={() => {
-            setShowCreateAccountPrompt(false);
-            navigation.goBack();
-          }}
-          message="Create an account to add medications and sync them across devices."
-        />
-      </SafeAreaView>
-    );
-  }
 
   const canContinue = name.trim().length > 0 && dosage.trim().length > 0 && timesOfDay.length > 0;
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
+    <SafeAreaView className="flex-1 bg-white" edges={['top', 'bottom']}>
       {/* Header */}
-      <View className="bg-primary rounded-t-[20px] px-6 py-6 flex-row justify-between items-center">
-        <Text className="text-lg font-bold text-white flex-1">Add Med</Text>
-        <TouchableOpacity onPress={() => navigation.goBack()} className="px-4 py-2">
-          <Text className="text-base text-white font-semibold">Cancel</Text>
+      <View className="flex-row items-center px-5 pt-4 pb-3">
+        <TouchableOpacity 
+          className="w-10 h-10 rounded-full bg-gray-100 justify-center items-center mr-3"
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="chevron-back" size={24} color="#333" />
         </TouchableOpacity>
+        <Text className="text-2xl font-bold text-gray-900 flex-1">Add Medication</Text>
       </View>
 
       <KeyboardAvoidingView 
@@ -344,12 +312,13 @@ const AddMedicineScreen = ({ navigation }) => {
           <View className="p-6">
             {/* Medication Name */}
             <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">
-                Medication Name <Text className="text-danger">*</Text>
+              <Text className="text-sm font-semibold text-gray-600 mb-2">
+                Medication Name <Text style={{ color: '#E53935' }}>*</Text>
               </Text>
               <TextInput
-                className="border border-gray-300 rounded-lg p-3 text-base bg-white"
+                className="bg-gray-50 rounded-xl p-4 text-base"
                 placeholder="e.g., Aspirin"
+                placeholderTextColor="#999"
                 value={name}
                 onChangeText={setName}
                 autoCapitalize="words"
@@ -358,12 +327,13 @@ const AddMedicineScreen = ({ navigation }) => {
 
             {/* Dosage */}
             <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">
-                Dosage <Text className="text-danger">*</Text>
+              <Text className="text-sm font-semibold text-gray-600 mb-2">
+                Dosage <Text style={{ color: '#E53935' }}>*</Text>
               </Text>
               <TextInput
-                className="border border-gray-300 rounded-lg p-3 text-base bg-white"
+                className="bg-gray-50 rounded-xl p-4 text-base"
                 placeholder="e.g., 100mg, 1 tablet"
+                placeholderTextColor="#999"
                 value={dosage}
                 onChangeText={setDosage}
               />
@@ -371,18 +341,19 @@ const AddMedicineScreen = ({ navigation }) => {
 
             {/* Medication Type */}
             <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">
-                Medication Type <Text className="text-danger">*</Text>
+              <Text className="text-sm font-semibold text-gray-600 mb-2">
+                Medication Type <Text style={{ color: '#E53935' }}>*</Text>
               </Text>
               <View className="flex-row flex-wrap justify-between gap-2">
                 {MEDICATION_TYPES.map((type) => (
                   <TouchableOpacity
                     key={type.value}
-                    className={`w-[31%] py-3 px-2 rounded-xl border-2 items-center justify-center ${
-                      medicationType === type.value
-                        ? 'bg-primary border-primary'
-                        : 'bg-gray-50 border-gray-300'
+                    className={`w-[31%] py-3 px-2 rounded-xl items-center justify-center ${
+                      medicationType === type.value ? '' : ''
                     }`}
+                    style={{
+                      backgroundColor: medicationType === type.value ? '#90CDF4' : '#F5F5F5',
+                    }}
                     onPress={() => setMedicationType(type.value)}
                     activeOpacity={0.7}
                   >
@@ -390,13 +361,15 @@ const AddMedicineScreen = ({ navigation }) => {
                       {getMedicationIcon(
                         type.value, 
                         20, 
-                        medicationType === type.value ? '#fff' : null
+                        medicationType === type.value ? '#fff' : '#666'
                       )}
-                      <Text className={`text-xs font-medium ${
-                        medicationType === type.value
-                          ? 'text-white font-semibold'
-                          : 'text-gray-600'
-                      }`}>
+                      <Text 
+                        className="text-xs font-medium"
+                        style={{
+                          color: medicationType === type.value ? '#fff' : '#666',
+                          fontWeight: medicationType === type.value ? '600' : '500',
+                        }}
+                      >
                         {type.label}
                       </Text>
                     </View>
@@ -408,14 +381,16 @@ const AddMedicineScreen = ({ navigation }) => {
             {/* Times of Day */}
             <View className="mb-6">
               <View className="flex-row justify-between items-center mb-2">
-                <Text className="text-base font-semibold text-gray-800">
-                  Times of Day <Text className="text-danger">*</Text>
+                <Text className="text-sm font-semibold text-gray-600">
+                  Times of Day <Text style={{ color: '#E53935' }}>*</Text>
                 </Text>
                 <TouchableOpacity
                   onPress={handleAddTime}
-                  className="w-9 h-9 rounded-full bg-primary items-center justify-center"
+                  className="w-10 h-10 rounded-full items-center justify-center"
+                  style={{ backgroundColor: '#90CDF4' }}
+                  activeOpacity={0.7}
                 >
-                  <Text className="text-white text-xl font-bold">+</Text>
+                  <MaterialIcons name="add" size={24} color="white" />
                 </TouchableOpacity>
               </View>
               {timesOfDay.length === 0 && (
@@ -426,10 +401,11 @@ const AddMedicineScreen = ({ navigation }) => {
               {timesOfDay.map((time, index) => (
                 <View key={index} className="flex-row items-center mb-3 gap-3">
                   <TouchableOpacity
-                    className="flex-1 border border-gray-300 rounded-lg p-3 bg-gray-50"
+                    className="flex-1 bg-gray-50 rounded-xl p-4"
                     onPress={() => openTimePicker(index)}
+                    activeOpacity={0.7}
                   >
-                    <Text className="text-base text-gray-800">
+                    <Text className="text-base text-gray-900 font-medium">
                       {formatTime(time)}
                     </Text>
                   </TouchableOpacity>
@@ -443,9 +419,11 @@ const AddMedicineScreen = ({ navigation }) => {
                   )}
                   <TouchableOpacity
                     onPress={() => handleRemoveTime(index)}
-                    className="w-9 h-9 rounded-full bg-danger items-center justify-center"
+                    className="w-10 h-10 rounded-full items-center justify-center"
+                    style={{ backgroundColor: '#E53935' }}
+                    activeOpacity={0.7}
                   >
-                    <Text className="text-white text-lg font-bold">✕</Text>
+                    <MaterialIcons name="close" size={20} color="white" />
                   </TouchableOpacity>
                 </View>
               ))}
@@ -453,53 +431,59 @@ const AddMedicineScreen = ({ navigation }) => {
 
             {/* Schedule Pattern */}
             <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">Schedule Pattern</Text>
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Schedule Pattern</Text>
               <View className="flex-row gap-2.5 mt-2">
                 <TouchableOpacity
-                  className={`flex-1 py-3 px-4 rounded-lg border items-center ${
-                    schedulePattern === 'daily'
-                      ? 'bg-primary border-primary'
-                      : 'bg-gray-50 border-gray-300'
-                  }`}
+                  className="flex-1 py-3 px-4 rounded-lg items-center"
+                  style={{
+                    backgroundColor: schedulePattern === 'daily' ? '#90CDF4' : '#F5F5F5',
+                  }}
                   onPress={() => setSchedulePattern('daily')}
+                  activeOpacity={0.7}
                 >
-                  <Text className={`text-sm font-medium ${
-                    schedulePattern === 'daily'
-                      ? 'text-white font-semibold'
-                      : 'text-gray-600'
-                  }`}>
+                  <Text 
+                    className="text-sm font-medium"
+                    style={{
+                      color: schedulePattern === 'daily' ? '#fff' : '#666',
+                      fontWeight: schedulePattern === 'daily' ? '600' : '500',
+                    }}
+                  >
                     Daily
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  className={`flex-1 py-3 px-4 rounded-lg border items-center ${
-                    schedulePattern === 'weekly'
-                      ? 'bg-primary border-primary'
-                      : 'bg-gray-50 border-gray-300'
-                  }`}
+                  className="flex-1 py-3 px-4 rounded-lg items-center"
+                  style={{
+                    backgroundColor: schedulePattern === 'weekly' ? '#90CDF4' : '#F5F5F5',
+                  }}
                   onPress={() => setSchedulePattern('weekly')}
+                  activeOpacity={0.7}
                 >
-                  <Text className={`text-sm font-medium ${
-                    schedulePattern === 'weekly'
-                      ? 'text-white font-semibold'
-                      : 'text-gray-600'
-                  }`}>
+                  <Text 
+                    className="text-sm font-medium"
+                    style={{
+                      color: schedulePattern === 'weekly' ? '#fff' : '#666',
+                      fontWeight: schedulePattern === 'weekly' ? '600' : '500',
+                    }}
+                  >
                     Weekly
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  className={`flex-1 py-3 px-4 rounded-lg border items-center ${
-                    schedulePattern === 'alternating'
-                      ? 'bg-primary border-primary'
-                      : 'bg-gray-50 border-gray-300'
-                  }`}
+                  className="flex-1 py-3 px-4 rounded-lg items-center"
+                  style={{
+                    backgroundColor: schedulePattern === 'alternating' ? '#90CDF4' : '#F5F5F5',
+                  }}
                   onPress={() => setSchedulePattern('alternating')}
+                  activeOpacity={0.7}
                 >
-                  <Text className={`text-sm font-medium ${
-                    schedulePattern === 'alternating'
-                      ? 'text-white font-semibold'
-                      : 'text-gray-600'
-                  }`}>
+                  <Text 
+                    className="text-sm font-medium"
+                    style={{
+                      color: schedulePattern === 'alternating' ? '#fff' : '#666',
+                      fontWeight: schedulePattern === 'alternating' ? '600' : '500',
+                    }}
+                  >
                     Alternating
                   </Text>
                 </TouchableOpacity>
@@ -507,8 +491,8 @@ const AddMedicineScreen = ({ navigation }) => {
 
               {/* Weekly - Day Selection */}
               {schedulePattern === 'weekly' && (
-                <View className="mt-4 p-3 bg-gray-100 rounded-lg">
-                  <Text className="text-sm font-semibold text-gray-800 mb-3">Select Days:</Text>
+                <View className="mt-4 p-3 bg-gray-50 rounded-xl">
+                  <Text className="text-sm font-semibold text-gray-600 mb-3">Select Days:</Text>
                   <View className="gap-2.5">
                     {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((day) => {
                       const dayKey = day.toLowerCase();
@@ -516,11 +500,10 @@ const AddMedicineScreen = ({ navigation }) => {
                       return (
                         <TouchableOpacity
                           key={day}
-                          className={`py-4 px-4 rounded-xl border-2 flex-row items-center justify-between ${
-                            isSelected
-                              ? 'bg-blue-50 border-primary'
-                              : 'bg-white border-gray-300'
-                          }`}
+                          className="py-4 px-4 rounded-xl flex-row items-center justify-between"
+                          style={{
+                            backgroundColor: isSelected ? '#E0F2FE' : 'white',
+                          }}
                           onPress={() => {
                             if (isSelected) {
                               setSelectedDays(selectedDays.filter(d => d !== dayKey));
@@ -528,16 +511,19 @@ const AddMedicineScreen = ({ navigation }) => {
                               setSelectedDays([...selectedDays, dayKey]);
                             }
                           }}
+                          activeOpacity={0.7}
                         >
-                          <Text className={`text-base font-medium flex-1 ${
-                            isSelected
-                              ? 'text-primary font-semibold'
-                              : 'text-gray-800'
-                          }`}>
+                          <Text 
+                            className="text-base font-medium flex-1"
+                            style={{
+                              color: isSelected ? '#90CDF4' : '#333',
+                              fontWeight: isSelected ? '600' : '500',
+                            }}
+                          >
                             {day}
                           </Text>
                           {isSelected && (
-                            <Text className="text-xl text-primary font-bold">✓</Text>
+                            <MaterialIcons name="check" size={20} color="#90CDF4" />
                           )}
                         </TouchableOpacity>
                       );
@@ -548,38 +534,42 @@ const AddMedicineScreen = ({ navigation }) => {
 
               {/* Alternating Options */}
               {schedulePattern === 'alternating' && (
-                <View className="mt-4 p-3 bg-gray-100 rounded-lg">
-                  <Text className="text-sm font-semibold text-gray-800 mb-2">Alternating Type:</Text>
+                <View className="mt-4 p-3 bg-gray-50 rounded-xl">
+                  <Text className="text-sm font-semibold text-gray-600 mb-2">Alternating Type:</Text>
                   <View className="flex-row gap-2.5">
                     <TouchableOpacity
-                      className={`flex-1 py-3 px-4 rounded-lg border items-center ${
-                        alternatingType === 'left_right'
-                          ? 'bg-primary border-primary'
-                          : 'bg-gray-50 border-gray-300'
-                      }`}
+                      className="flex-1 py-3 px-4 rounded-lg items-center"
+                      style={{
+                        backgroundColor: alternatingType === 'left_right' ? '#90CDF4' : '#F5F5F5',
+                      }}
                       onPress={() => setAlternatingType('left_right')}
+                      activeOpacity={0.7}
                     >
-                      <Text className={`text-sm font-medium ${
-                        alternatingType === 'left_right'
-                          ? 'text-white font-semibold'
-                          : 'text-gray-600'
-                      }`}>
+                      <Text 
+                        className="text-sm font-medium"
+                        style={{
+                          color: alternatingType === 'left_right' ? '#fff' : '#666',
+                          fontWeight: alternatingType === 'left_right' ? '600' : '500',
+                        }}
+                      >
                         Left/Right
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      className={`flex-1 py-3 px-4 rounded-lg border items-center ${
-                        alternatingType === 'day_cycle'
-                          ? 'bg-primary border-primary'
-                          : 'bg-gray-50 border-gray-300'
-                      }`}
+                      className="flex-1 py-3 px-4 rounded-lg items-center"
+                      style={{
+                        backgroundColor: alternatingType === 'day_cycle' ? '#90CDF4' : '#F5F5F5',
+                      }}
                       onPress={() => setAlternatingType('day_cycle')}
+                      activeOpacity={0.7}
                     >
-                      <Text className={`text-sm font-medium ${
-                        alternatingType === 'day_cycle'
-                          ? 'text-white font-semibold'
-                          : 'text-gray-600'
-                      }`}>
+                      <Text 
+                        className="text-sm font-medium"
+                        style={{
+                          color: alternatingType === 'day_cycle' ? '#fff' : '#666',
+                          fontWeight: alternatingType === 'day_cycle' ? '600' : '500',
+                        }}
+                      >
                         Day Cycle
                       </Text>
                     </TouchableOpacity>
@@ -587,37 +577,41 @@ const AddMedicineScreen = ({ navigation }) => {
                   
                   {alternatingType === 'left_right' && (
                     <View className="mt-4">
-                      <Text className="text-sm font-semibold text-gray-800 mb-2">Start with:</Text>
+                      <Text className="text-sm font-semibold text-gray-600 mb-2">Start with:</Text>
                       <View className="flex-row gap-2.5">
                         <TouchableOpacity
-                          className={`flex-1 py-3 px-4 rounded-lg border items-center ${
-                            alternatingCurrent === 'left'
-                              ? 'bg-primary border-primary'
-                              : 'bg-gray-50 border-gray-300'
-                          }`}
+                          className="flex-1 py-3 px-4 rounded-lg items-center"
+                          style={{
+                            backgroundColor: alternatingCurrent === 'left' ? '#90CDF4' : '#F5F5F5',
+                          }}
                           onPress={() => setAlternatingCurrent('left')}
+                          activeOpacity={0.7}
                         >
-                          <Text className={`text-sm font-medium ${
-                            alternatingCurrent === 'left'
-                              ? 'text-white font-semibold'
-                              : 'text-gray-600'
-                          }`}>
+                          <Text 
+                            className="text-sm font-medium"
+                            style={{
+                              color: alternatingCurrent === 'left' ? '#fff' : '#666',
+                              fontWeight: alternatingCurrent === 'left' ? '600' : '500',
+                            }}
+                          >
                             Left
                           </Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                          className={`flex-1 py-3 px-4 rounded-lg border items-center ${
-                            alternatingCurrent === 'right'
-                              ? 'bg-primary border-primary'
-                              : 'bg-gray-50 border-gray-300'
-                          }`}
+                          className="flex-1 py-3 px-4 rounded-lg items-center"
+                          style={{
+                            backgroundColor: alternatingCurrent === 'right' ? '#90CDF4' : '#F5F5F5',
+                          }}
                           onPress={() => setAlternatingCurrent('right')}
+                          activeOpacity={0.7}
                         >
-                          <Text className={`text-sm font-medium ${
-                            alternatingCurrent === 'right'
-                              ? 'text-white font-semibold'
-                              : 'text-gray-600'
-                          }`}>
+                          <Text 
+                            className="text-sm font-medium"
+                            style={{
+                              color: alternatingCurrent === 'right' ? '#fff' : '#666',
+                              fontWeight: alternatingCurrent === 'right' ? '600' : '500',
+                            }}
+                          >
                             Right
                           </Text>
                         </TouchableOpacity>
@@ -627,61 +621,67 @@ const AddMedicineScreen = ({ navigation }) => {
                   
                   {alternatingType === 'day_cycle' && (
                     <View className="mt-4">
-                      <Text className="text-sm font-semibold text-gray-800 mb-2">Days On / Days Off:</Text>
+                      <Text className="text-sm font-semibold text-gray-600 mb-2">Days On / Days Off:</Text>
                       <View className="flex-row gap-3 mt-2">
                         <View className="flex-1">
                           <Text className="text-xs text-gray-600 mb-1">Take for (days):</Text>
                           <TextInput
-                            className="border border-gray-300 rounded-lg p-2 text-base bg-white text-center"
+                            className="bg-white rounded-xl p-3 text-base text-center"
                             value={alternatingDaysOn}
                             onChangeText={setAlternatingDaysOn}
                             keyboardType="number-pad"
                             placeholder="3"
+                            placeholderTextColor="#999"
                           />
                         </View>
                         <View className="flex-1">
                           <Text className="text-xs text-gray-600 mb-1">Skip for (days):</Text>
                           <TextInput
-                            className="border border-gray-300 rounded-lg p-2 text-base bg-white text-center"
+                            className="bg-white rounded-xl p-3 text-base text-center"
                             value={alternatingDaysOff}
                             onChangeText={setAlternatingDaysOff}
                             keyboardType="number-pad"
                             placeholder="1"
+                            placeholderTextColor="#999"
                           />
                         </View>
                       </View>
                       <View className="mt-4">
-                        <Text className="text-sm font-semibold text-gray-800 mb-2">Start with:</Text>
+                        <Text className="text-sm font-semibold text-gray-600 mb-2">Start with:</Text>
                         <View className="flex-row gap-2.5">
                           <TouchableOpacity
-                            className={`flex-1 py-3 px-4 rounded-lg border items-center ${
-                              alternatingCurrent === 'day1'
-                                ? 'bg-primary border-primary'
-                                : 'bg-gray-50 border-gray-300'
-                            }`}
+                            className="flex-1 py-3 px-4 rounded-lg items-center"
+                            style={{
+                              backgroundColor: alternatingCurrent === 'day1' ? '#90CDF4' : '#F5F5F5',
+                            }}
                             onPress={() => setAlternatingCurrent('day1')}
+                            activeOpacity={0.7}
                           >
-                            <Text className={`text-sm font-medium ${
-                              alternatingCurrent === 'day1'
-                                ? 'text-white font-semibold'
-                                : 'text-gray-600'
-                            }`}>
+                            <Text 
+                              className="text-sm font-medium"
+                              style={{
+                                color: alternatingCurrent === 'day1' ? '#fff' : '#666',
+                                fontWeight: alternatingCurrent === 'day1' ? '600' : '500',
+                              }}
+                            >
                               Day 1 (Take)
                             </Text>
                           </TouchableOpacity>
                           <TouchableOpacity
-                            className={`flex-1 py-3 px-4 rounded-lg border items-center ${
-                              alternatingCurrent === 'day2'
-                                ? 'bg-primary border-primary'
-                                : 'bg-gray-50 border-gray-300'
-                            }`}
+                            className="flex-1 py-3 px-4 rounded-lg items-center"
+                            style={{
+                              backgroundColor: alternatingCurrent === 'day2' ? '#90CDF4' : '#F5F5F5',
+                            }}
                             onPress={() => setAlternatingCurrent('day2')}
+                            activeOpacity={0.7}
                           >
-                            <Text className={`text-sm font-medium ${
-                              alternatingCurrent === 'day2'
-                                ? 'text-white font-semibold'
-                                : 'text-gray-600'
-                            }`}>
+                            <Text 
+                              className="text-sm font-medium"
+                              style={{
+                                color: alternatingCurrent === 'day2' ? '#fff' : '#666',
+                                fontWeight: alternatingCurrent === 'day2' ? '600' : '500',
+                              }}
+                            >
                               Day 2 (Skip)
                             </Text>
                           </TouchableOpacity>
@@ -695,14 +695,15 @@ const AddMedicineScreen = ({ navigation }) => {
 
             {/* Start Date */}
             <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">
-                Start Date <Text className="text-danger">*</Text>
+              <Text className="text-sm font-semibold text-gray-600 mb-2">
+                Start Date <Text style={{ color: '#E53935' }}>*</Text>
               </Text>
               <TouchableOpacity
-                className="border border-gray-300 rounded-lg p-3 bg-gray-50"
+                className="bg-gray-50 rounded-xl p-4"
                 onPress={() => setShowStartDatePicker(true)}
+                activeOpacity={0.7}
               >
-                <Text className="text-base text-gray-800">
+                <Text className="text-base text-gray-900 font-medium">
                   {startDate.toLocaleDateString()}
                 </Text>
               </TouchableOpacity>
@@ -725,26 +726,27 @@ const AddMedicineScreen = ({ navigation }) => {
             <View className="mb-6">
               <View className="flex-row justify-between items-center">
                 <View className="flex-1">
-                  <Text className="text-base font-semibold text-gray-800">Continuous Medication</Text>
-                  <Text className="text-xs text-gray-600 mt-1">
+                  <Text className="text-sm font-semibold text-gray-600">Continuous Medication</Text>
+                  <Text className="text-xs text-gray-500 mt-1">
                     {isContinuous ? 'No end date' : 'Has end date'}
                   </Text>
                 </View>
                 <Switch
                   value={isContinuous}
                   onValueChange={setIsContinuous}
-                  trackColor={{ false: '#767577', true: '#4285F4' }}
+                  trackColor={{ false: '#767577', true: '#90CDF4' }}
                   thumbColor={isContinuous ? '#fff' : '#f4f3f4'}
                 />
               </View>
               {!isContinuous && (
                 <View className="mt-4">
-                  <Text className="text-base font-semibold text-gray-800 mb-2">End Date</Text>
+                  <Text className="text-sm font-semibold text-gray-600 mb-2">End Date</Text>
                   <TouchableOpacity
-                    className="border border-gray-300 rounded-lg p-3 bg-gray-50"
+                    className="bg-gray-50 rounded-xl p-4"
                     onPress={() => setShowEndDatePicker(true)}
+                    activeOpacity={0.7}
                   >
-                    <Text className="text-base text-gray-800">
+                    <Text className="text-base text-gray-900 font-medium">
                       {endDate
                         ? endDate.toLocaleDateString()
                         : 'Select end date'}
@@ -769,11 +771,12 @@ const AddMedicineScreen = ({ navigation }) => {
 
             {/* Food Instructions */}
             <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">Food Instructions</Text>
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Food Instructions</Text>
               <TextInput
-                className="border border-gray-300 rounded-lg p-3 text-base bg-white h-20"
+                className="bg-gray-50 rounded-xl p-4 text-base h-20"
                 style={{ textAlignVertical: 'top' }}
                 placeholder="e.g., Take with food, Take on empty stomach"
+                placeholderTextColor="#999"
                 value={foodInstructions}
                 onChangeText={setFoodInstructions}
                 multiline
@@ -783,11 +786,12 @@ const AddMedicineScreen = ({ navigation }) => {
 
             {/* Reason for Treatment */}
             <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">Reason for Treatment</Text>
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Reason for Treatment</Text>
               <TextInput
-                className="border border-gray-300 rounded-lg p-3 text-base bg-white h-20"
+                className="bg-gray-50 rounded-xl p-4 text-base h-20"
                 style={{ textAlignVertical: 'top' }}
                 placeholder="Why are you taking this medication? (e.g., High blood pressure, Diabetes)"
+                placeholderTextColor="#999"
                 value={reasonForTreatment}
                 onChangeText={setReasonForTreatment}
                 multiline
@@ -797,11 +801,12 @@ const AddMedicineScreen = ({ navigation }) => {
 
             {/* Notes */}
             <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">Notes</Text>
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Notes</Text>
               <TextInput
-                className="border border-gray-300 rounded-lg p-3 text-base bg-white h-20"
+                className="bg-gray-50 rounded-xl p-4 text-base h-20"
                 style={{ textAlignVertical: 'top' }}
                 placeholder="Additional notes about this medication"
+                placeholderTextColor="#999"
                 value={notes}
                 onChangeText={setNotes}
                 multiline
@@ -811,23 +816,28 @@ const AddMedicineScreen = ({ navigation }) => {
 
             {/* Photo */}
             <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">Medication Photo</Text>
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Medication Photo</Text>
               <TouchableOpacity
-                className="border border-gray-300 rounded-lg p-5 items-center justify-center bg-gray-50 min-h-[120px]"
+                className="bg-gray-50 rounded-xl p-5 items-center justify-center min-h-[120px]"
                 onPress={pickImage}
+                activeOpacity={0.7}
               >
                 {photo ? (
                   <Image source={{ uri: photo }} className="w-full h-48 rounded-lg" resizeMode="contain" />
                 ) : (
-                  <Text className="text-base text-gray-600">📷 Add Photo</Text>
+                  <View className="items-center">
+                    <MaterialIcons name="add-photo-alternate" size={48} color="#999" />
+                    <Text className="text-sm text-gray-600 mt-2">Add Photo</Text>
+                  </View>
                 )}
               </TouchableOpacity>
               {photo && (
                 <TouchableOpacity
                   onPress={() => setPhoto(null)}
                   className="mt-2 self-start"
+                  activeOpacity={0.7}
                 >
-                  <Text className="text-danger text-sm">Remove Photo</Text>
+                  <Text className="text-sm font-semibold" style={{ color: '#E53935' }}>Remove Photo</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -839,10 +849,11 @@ const AddMedicineScreen = ({ navigation }) => {
                 quantityRemainingYRef.current = event.nativeEvent.layout.y;
               }}
             >
-              <Text className="text-base font-semibold text-gray-800 mb-2">Quantity Remaining</Text>
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Quantity Remaining</Text>
               <TextInput
-                className="border border-gray-300 rounded-lg p-3 text-base bg-white"
+                className="bg-gray-50 rounded-xl p-4 text-base"
                 placeholder="e.g., 30 tablets"
+                placeholderTextColor="#999"
                 value={quantityRemaining}
                 onChangeText={setQuantityRemaining}
                 keyboardType="number-pad"
@@ -863,10 +874,11 @@ const AddMedicineScreen = ({ navigation }) => {
                 lowStockYRef.current = event.nativeEvent.layout.y;
               }}
             >
-              <Text className="text-base font-semibold text-gray-800 mb-2">Low Stock Alert (days)</Text>
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Low Stock Alert (days)</Text>
               <TextInput
-                className="border border-gray-300 rounded-lg p-3 text-base bg-white"
+                className="bg-gray-50 rounded-xl p-4 text-base"
                 placeholder="7"
+                placeholderTextColor="#999"
                 value={lowStockThreshold}
                 onChangeText={setLowStockThreshold}
                 keyboardType="number-pad"
@@ -884,19 +896,20 @@ const AddMedicineScreen = ({ navigation }) => {
       </KeyboardAvoidingView>
 
       {/* Footer */}
-      <View className="p-6 border-t border-gray-300">
+      <View className="px-5 pb-8 pt-4 border-t border-gray-200">
         <TouchableOpacity
-          className={`py-4 rounded-xl items-center ${
-            canContinue && !loading ? 'bg-primary' : 'bg-gray-400'
-          }`}
+          className="rounded-xl p-4 items-center justify-center"
+          style={{ 
+            backgroundColor: canContinue && !loading ? '#90CDF4' : '#B0BEC5' 
+          }}
           onPress={handleSubmit}
           disabled={!canContinue || loading}
-          activeOpacity={0.8}
+          activeOpacity={0.7}
         >
           {loading ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color="white" />
           ) : (
-            <Text className="text-white text-lg font-semibold">
+            <Text className="text-white text-base font-bold">
               {timesOfDay.length > 0 ? 'Add Medication' : 'Add Time to Continue'}
             </Text>
           )}

@@ -2,14 +2,25 @@ import React, { useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, TextInput, Image, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import authService from '../services/authService';
+import { useSignUp, useOAuth } from '@clerk/clerk-expo';
+import { useAuth } from '../context/ClerkAuthContext';
 import onboardingService from '../services/onboardingService';
 import firebaseService from '../services/firebaseService';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { clerkAxios } from '../utils/clerkAxios';
 
 const SignUpScreen = ({ onSignUpSuccess }) => {
   const navigation = useNavigation();
   const scrollViewRef = useRef(null);
+  const { signUp, setActive, isLoaded } = useSignUp();
+  const { userId } = useAuth();
+  const { startOAuthFlow: startGoogleOAuth } = useOAuth({ 
+    strategy: 'oauth_google',
+    redirectUrl: 'mediping://oauth-callback',
+  });
+  const { startOAuthFlow: startAppleOAuth } = useOAuth({ 
+    strategy: 'oauth_apple',
+    redirectUrl: 'mediping://oauth-callback',
+  });
   const [loading, setLoading] = useState(false);
   const [loadingProvider, setLoadingProvider] = useState(null); // 'google', 'apple', or 'email'
   const [name, setName] = useState('');
@@ -18,54 +29,40 @@ const SignUpScreen = ({ onSignUpSuccess }) => {
   const [confirmPassword, setConfirmPassword] = useState('');
 
   const handleGoogleSignUp = async () => {
+    if (!isLoaded) return;
+    
     setLoading(true);
     setLoadingProvider('google');
     
     try {
-      const result = await authService.signInWithGoogle();
+      // Start OAuth flow - this will open a browser/webview
+      const { createdSessionId, setActive } = await startGoogleOAuth({
+        redirectUrl: 'mediping://oauth-callback',
+      });
       
-      if (result.success) {
-        // Store token
-        await AsyncStorage.setItem('authToken', result.token);
-        await AsyncStorage.setItem('userData', JSON.stringify(result.user));
-        
-        // Migrate guest data (medications, questionnaire) to user account
-        try {
-          const migrationResult = await onboardingService.migrateGuestDataToUser(
-            result.user.id || result.user.user?.id,
-            result.token
-          );
-          
-          if (migrationResult.medicationsMigrated > 0) {
-            Alert.alert(
-              'Success!',
-              `Your account has been created and ${migrationResult.medicationsMigrated} medication(s) have been saved!`,
-              [{ text: 'OK' }]
-            );
-          }
-        } catch (migrationError) {
-          console.error('Migration error:', migrationError);
-          // Don't block signup if migration fails
-          Alert.alert(
-            'Account Created',
-            'Your account has been created. Some data may need to be synced.',
-            [{ text: 'OK' }]
-          );
-        }
+      if (createdSessionId) {
+        await setActive({ session: createdSessionId });
         
         // Track signup
         firebaseService.userSignedUp('google');
         
         // Call success callback
+        // Migration will be handled automatically when user data is synced
         if (onSignUpSuccess) {
-          onSignUpSuccess(result.user, result.token);
+          onSignUpSuccess();
         }
-      } else {
-        Alert.alert('Sign Up Failed', result.error || 'Failed to sign up with Google');
       }
     } catch (error) {
       console.error('Google sign up error:', error);
-      Alert.alert('Error', error.message || 'An error occurred during sign up');
+      // Check if it's the origin error - might be a Clerk internal issue
+      if (error.message?.includes('origin') || error.message?.includes('undefined')) {
+        Alert.alert(
+          'OAuth Error', 
+          'There was an issue with the OAuth configuration. Please ensure Clerk is properly configured in your dashboard.'
+        );
+      } else {
+        Alert.alert('Sign Up Failed', error.message || 'Failed to sign up with Google');
+      }
     } finally {
       setLoading(false);
       setLoadingProvider(null);
@@ -73,54 +70,40 @@ const SignUpScreen = ({ onSignUpSuccess }) => {
   };
 
   const handleAppleSignUp = async () => {
+    if (!isLoaded) return;
+    
     setLoading(true);
     setLoadingProvider('apple');
     
     try {
-      const result = await authService.signInWithApple();
+      // Start OAuth flow - this will open a browser/webview
+      const { createdSessionId, setActive } = await startAppleOAuth({
+        redirectUrl: 'mediping://oauth-callback',
+      });
       
-      if (result.success) {
-        // Store token
-        await AsyncStorage.setItem('authToken', result.token);
-        await AsyncStorage.setItem('userData', JSON.stringify(result.user));
-        
-        // Migrate guest data (medications, questionnaire) to user account
-        try {
-          const migrationResult = await onboardingService.migrateGuestDataToUser(
-            result.user.id || result.user.user?.id,
-            result.token
-          );
-          
-          if (migrationResult.medicationsMigrated > 0) {
-            Alert.alert(
-              'Success!',
-              `Your account has been created and ${migrationResult.medicationsMigrated} medication(s) have been saved!`,
-              [{ text: 'OK' }]
-            );
-          }
-        } catch (migrationError) {
-          console.error('Migration error:', migrationError);
-          // Don't block signup if migration fails
-          Alert.alert(
-            'Account Created',
-            'Your account has been created. Some data may need to be synced.',
-            [{ text: 'OK' }]
-          );
-        }
+      if (createdSessionId) {
+        await setActive({ session: createdSessionId });
         
         // Track signup
         firebaseService.userSignedUp('apple');
         
         // Call success callback
+        // Migration will be handled automatically when user data is synced
         if (onSignUpSuccess) {
-          onSignUpSuccess(result.user, result.token);
+          onSignUpSuccess();
         }
-      } else {
-        Alert.alert('Sign Up Failed', result.error || 'Failed to sign up with Apple');
       }
     } catch (error) {
       console.error('Apple sign up error:', error);
-      Alert.alert('Error', error.message || 'An error occurred during sign up');
+      // Check if it's the origin error - might be a Clerk internal issue
+      if (error.message?.includes('origin') || error.message?.includes('undefined')) {
+        Alert.alert(
+          'OAuth Error', 
+          'There was an issue with the OAuth configuration. Please ensure Clerk is properly configured in your dashboard.'
+        );
+      } else {
+        Alert.alert('Sign Up Failed', error.message || 'Failed to sign up with Apple');
+      }
     } finally {
       setLoading(false);
       setLoadingProvider(null);
@@ -143,22 +126,33 @@ const SignUpScreen = ({ onSignUpSuccess }) => {
       return;
     }
 
+    if (!isLoaded) return;
+
     setLoading(true);
     setLoadingProvider('email');
     
     try {
-      const result = await authService.register(name, email, password);
-      
-      if (result.success) {
-        // Store token
-        await AsyncStorage.setItem('authToken', result.token);
-        await AsyncStorage.setItem('userData', JSON.stringify(result.user));
+      // Create user with Clerk
+      const result = await signUp.create({
+        emailAddress: email,
+        password: password,
+        firstName: name.split(' ')[0] || name,
+        lastName: name.split(' ').slice(1).join(' ') || '',
+      });
+
+      // Complete sign up (verify email if required)
+      if (result.status === 'complete') {
+        await setActive({ session: result.createdSessionId });
+        
+        // Create user record on server with Clerk userId
+        // The server will automatically create the user on first authenticated request
+        // So we don't need to call a separate endpoint here
         
         // Migrate guest data (medications, questionnaire) to user account
         try {
           const migrationResult = await onboardingService.migrateGuestDataToUser(
-            result.user.id || result.user.user?.id,
-            result.token
+            result.id, // Use Clerk userId
+            null // No token needed, using Clerk
           );
           
           if (migrationResult.medicationsMigrated > 0) {
@@ -171,11 +165,6 @@ const SignUpScreen = ({ onSignUpSuccess }) => {
         } catch (migrationError) {
           console.error('Migration error:', migrationError);
           // Don't block signup if migration fails
-          Alert.alert(
-            'Account Created',
-            'Your account has been created. Some data may need to be synced.',
-            [{ text: 'OK' }]
-          );
         }
         
         // Track signup
@@ -183,29 +172,36 @@ const SignUpScreen = ({ onSignUpSuccess }) => {
         
         // Call success callback
         if (onSignUpSuccess) {
-          onSignUpSuccess(result.user, result.token);
+          onSignUpSuccess();
         }
       } else {
-        // Handle 409 specifically - suggest login
-        if (result.statusCode === 409) {
-          Alert.alert(
-            'Email Already Registered',
-            result.error || 'This email is already registered. Would you like to log in instead?',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              { 
-                text: 'Log In', 
-                onPress: () => navigation.navigate('Login')
-              }
-            ]
-          );
-        } else {
-          Alert.alert('Sign Up Failed', result.error || 'Failed to create account');
-        }
+        // Email verification required
+        Alert.alert(
+          'Verification Required',
+          'Please check your email to verify your account before signing in.',
+          [{ text: 'OK' }]
+        );
       }
     } catch (error) {
       console.error('Email sign up error:', error);
-      Alert.alert('Error', error.message || 'An error occurred during sign up');
+      const errorMessage = error.errors?.[0]?.message || error.message || 'Failed to create account';
+      
+      // Handle email already exists
+      if (errorMessage.includes('already exists') || errorMessage.includes('already registered')) {
+        Alert.alert(
+          'Email Already Registered',
+          'This email is already registered. Would you like to log in instead?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { 
+              text: 'Log In', 
+              onPress: () => navigation.navigate('Login')
+            }
+          ]
+        );
+      } else {
+        Alert.alert('Sign Up Failed', errorMessage);
+      }
     } finally {
       setLoading(false);
       setLoadingProvider(null);
@@ -245,9 +241,6 @@ const SignUpScreen = ({ onSignUpSuccess }) => {
             autoCapitalize="words"
             autoCorrect={false}
             returnKeyType="next"
-            onSubmitEditing={() => {
-              // Focus next input if needed
-            }}
           />
 
           <TextInput
@@ -289,7 +282,7 @@ const SignUpScreen = ({ onSignUpSuccess }) => {
           <TouchableOpacity
             style={[styles.button, styles.emailButton]}
             onPress={handleEmailSignUp}
-            disabled={loading}
+            disabled={loading || !isLoaded}
           >
             {loading && loadingProvider === 'email' ? (
               <ActivityIndicator color="#fff" />
@@ -309,7 +302,7 @@ const SignUpScreen = ({ onSignUpSuccess }) => {
           <TouchableOpacity
             style={[styles.button, styles.googleButton]}
             onPress={handleGoogleSignUp}
-            disabled={loading}
+            disabled={loading || !isLoaded}
           >
             {loading && loadingProvider === 'google' ? (
               <ActivityIndicator color="#4285F4" />
@@ -328,7 +321,7 @@ const SignUpScreen = ({ onSignUpSuccess }) => {
           <TouchableOpacity
             style={[styles.button, styles.appleButton]}
             onPress={handleAppleSignUp}
-            disabled={loading}
+            disabled={loading || !isLoaded}
           >
             {loading && loadingProvider === 'apple' ? (
               <ActivityIndicator color="#000" />

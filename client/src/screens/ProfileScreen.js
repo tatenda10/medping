@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, ScrollView, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, Alert, ActivityIndicator, ScrollView, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import axios from 'axios';
 import BASE_URL from '../context/Api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import TIMEZONES from '../utils/timezones';
-import AppHeader from '../components/AppHeader';
 import { useAuthCheck } from '../hooks/useAuthCheck';
 import CreateAccountPrompt from '../components/CreateAccountPrompt';
 import syncService from '../services/syncService';
@@ -31,12 +31,10 @@ const ProfileScreen = ({ navigation, userToken, onLogout }) => {
   const loadUserProfile = async () => {
     setLoading(true);
     try {
-      // Load from local storage first (offline-first, just like other screens)
       const userData = await AsyncStorage.getItem('userData');
       const user = userData ? JSON.parse(userData) : null;
       
       if (user) {
-        // Load from local storage immediately
         setName(user.name || '');
         setEmail(user.email || '');
         setTimezone(user.timezone || 'UTC');
@@ -44,11 +42,9 @@ const ProfileScreen = ({ navigation, userToken, onLogout }) => {
         setGender(user.profile?.gender || '');
         setLoading(false);
       } else {
-        // No local data - show empty profile
         setLoading(false);
       }
 
-      // Try to sync and fetch latest from server (if online, not based on authentication)
       const online = await syncService.isOnline();
       if (online) {
         try {
@@ -62,9 +58,7 @@ const ProfileScreen = ({ navigation, userToken, onLogout }) => {
 
             if (response.data.success) {
               const serverUser = response.data.user;
-              // Update local storage with server data
               await AsyncStorage.setItem('userData', JSON.stringify(serverUser));
-              // Update UI
               setName(serverUser.name || '');
               setEmail(serverUser.email || '');
               setTimezone(serverUser.timezone || 'UTC');
@@ -73,7 +67,6 @@ const ProfileScreen = ({ navigation, userToken, onLogout }) => {
             }
           }
         } catch (error) {
-          // Silently handle errors - use local data
           if (error.response?.status !== 401) {
             console.log('Using local data - offline or server error:', error.message);
           }
@@ -139,17 +132,15 @@ const ProfileScreen = ({ navigation, userToken, onLogout }) => {
   };
 
   const handleCancel = () => {
-    // Reload profile to reset any changes
     loadUserProfile();
     setIsEditing(false);
   };
 
   if (!isAuthenticated) {
     return (
-      <View style={styles.container}>
-        <AppHeader navigation={navigation} />
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <Text style={{ fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 20 }}>
+      <SafeAreaView className="flex-1 bg-white" edges={['top']}>
+        <View className="flex-1 justify-center items-center px-5">
+          <Text className="text-lg text-gray-600 text-center mb-4">
             Create an account to view and edit your profile.
           </Text>
         </View>
@@ -161,52 +152,69 @@ const ProfileScreen = ({ navigation, userToken, onLogout }) => {
           }}
           message="Create an account to view and edit your profile."
         />
-      </View>
+      </SafeAreaView>
     );
   }
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        <AppHeader navigation={navigation} />
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#4285F4" />
+      <SafeAreaView className="flex-1 bg-white" edges={['top']}>
+        <View className="flex-row items-center px-5 pt-4 pb-3">
+          <TouchableOpacity 
+            className="w-10 h-10 rounded-full bg-gray-100 justify-center items-center mr-3"
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="chevron-back" size={24} color="#333" />
+          </TouchableOpacity>
+          <Text className="text-2xl font-bold text-gray-900 flex-1">Profile</Text>
         </View>
-      </View>
+        <View className="flex-1 justify-center items-center">
+          <ActivityIndicator size="large" color="#90CDF4" />
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <AppHeader navigation={navigation} />
+    <SafeAreaView className="flex-1 bg-white" edges={['top']}>
       <KeyboardAvoidingView
-        style={styles.keyboardView}
+        className="flex-1"
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
+          className="flex-1"
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.headerRow}>
-            <Text style={styles.title}>Profile</Text>
+          {/* Header */}
+          <View className="flex-row items-center px-5 pt-4 pb-3">
+            <TouchableOpacity 
+              className="w-10 h-10 rounded-full bg-gray-100 justify-center items-center mr-3"
+              onPress={() => navigation.goBack()}
+            >
+              <Ionicons name="chevron-back" size={24} color="#333" />
+            </TouchableOpacity>
+            <Text className="text-2xl font-bold text-gray-900 flex-1">Profile</Text>
             {!isEditing && (
               <TouchableOpacity
-                style={styles.editButton}
+                className="px-4 py-2 rounded-lg"
+                style={{ backgroundColor: '#90CDF4' }}
                 onPress={() => setIsEditing(true)}
+                activeOpacity={0.7}
               >
-                <Text style={styles.editButtonText}>Edit</Text>
+                <Text className="text-base font-semibold text-white">Edit</Text>
               </TouchableOpacity>
             )}
           </View>
 
-          <View style={styles.formContainer}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Name</Text>
+          {/* Form */}
+          <View className="px-5 pb-8">
+            {/* Name */}
+            <View className="mb-6">
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Name</Text>
               {isEditing ? (
                 <TextInput
-                  style={styles.input}
+                  className="bg-gray-50 rounded-xl p-4 text-base"
                   placeholder="Enter your name"
                   placeholderTextColor="#999"
                   value={name}
@@ -214,29 +222,32 @@ const ProfileScreen = ({ navigation, userToken, onLogout }) => {
                   autoCapitalize="words"
                 />
               ) : (
-                <View style={[styles.input, styles.displayValue]}>
-                  <Text style={styles.displayText}>{name || 'Not set'}</Text>
+                <View className="bg-gray-50 rounded-xl p-4">
+                  <Text className="text-base text-gray-900">{name || 'Not set'}</Text>
                 </View>
               )}
             </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Email</Text>
-              <View style={[styles.input, styles.displayValue]}>
-                <Text style={styles.displayText}>{email || 'Not set'}</Text>
+            {/* Email */}
+            <View className="mb-6">
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Email</Text>
+              <View className="bg-gray-50 rounded-xl p-4">
+                <Text className="text-base text-gray-900">{email || 'Not set'}</Text>
               </View>
-              <Text style={styles.helperText}>Email cannot be changed</Text>
+              <Text className="text-xs text-gray-500 mt-2">Email cannot be changed</Text>
             </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Age</Text>
+            {/* Age */}
+            <View className="mb-6">
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Age</Text>
               {isEditing ? (
                 <>
                   <TouchableOpacity
-                    style={styles.dateButton}
+                    className="bg-gray-50 rounded-xl p-4"
                     onPress={() => setShowDatePicker(true)}
+                    activeOpacity={0.7}
                   >
-                    <Text style={styles.dateButtonText}>
+                    <Text className="text-base text-gray-900">
                       {age ? `${age} years old` : 'Select your birth date'}
                     </Text>
                   </TouchableOpacity>
@@ -251,53 +262,81 @@ const ProfileScreen = ({ navigation, userToken, onLogout }) => {
                   )}
                 </>
               ) : (
-                <View style={[styles.input, styles.displayValue]}>
-                  <Text style={styles.displayText}>{age ? `${age} years old` : 'Not set'}</Text>
+                <View className="bg-gray-50 rounded-xl p-4">
+                  <Text className="text-base text-gray-900">{age ? `${age} years old` : 'Not set'}</Text>
                 </View>
               )}
             </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Gender</Text>
+            {/* Gender */}
+            <View className="mb-6">
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Gender</Text>
               {isEditing ? (
-                <View style={styles.genderContainer}>
+                <View className="flex-row flex-wrap gap-3">
                   {['male', 'female', 'other', 'prefer_not_to_say'].map((g) => (
                     <TouchableOpacity
                       key={g}
-                      style={[styles.genderButton, gender === g && styles.genderButtonSelected]}
+                      className={`flex-1 min-w-[45%] rounded-xl p-4 items-center border-2 ${
+                        gender === g ? '' : ''
+                      }`}
+                      style={{
+                        borderColor: gender === g ? '#90CDF4' : '#E0E0E0',
+                        backgroundColor: gender === g ? '#E0F2FE' : 'white',
+                      }}
                       onPress={() => setGender(g)}
+                      activeOpacity={0.7}
                     >
-                      <Text style={[styles.genderButtonText, gender === g && styles.genderButtonTextSelected]}>
+                      <Text
+                        className="text-sm font-medium"
+                        style={{
+                          color: gender === g ? '#90CDF4' : '#333',
+                          fontWeight: gender === g ? '600' : '500',
+                        }}
+                      >
                         {g.charAt(0).toUpperCase() + g.slice(1).replace('_', ' ')}
                       </Text>
                     </TouchableOpacity>
                   ))}
                 </View>
               ) : (
-                <View style={[styles.input, styles.displayValue]}>
-                  <Text style={styles.displayText}>
+                <View className="bg-gray-50 rounded-xl p-4">
+                  <Text className="text-base text-gray-900">
                     {gender ? gender.charAt(0).toUpperCase() + gender.slice(1).replace('_', ' ') : 'Not set'}
                   </Text>
                 </View>
               )}
             </View>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Timezone</Text>
+            {/* Timezone */}
+            <View className="mb-6">
+              <Text className="text-sm font-semibold text-gray-600 mb-2">Timezone</Text>
               {isEditing ? (
                 <ScrollView 
-                  style={styles.timezoneScrollView}
+                  className="max-h-72"
                   showsVerticalScrollIndicator={true}
                   nestedScrollEnabled={true}
                 >
-                  <View style={styles.timezoneContainer}>
+                  <View className="gap-3">
                     {TIMEZONES.map((tz) => (
                       <TouchableOpacity
                         key={tz.value}
-                        style={[styles.timezoneButton, timezone === tz.value && styles.timezoneButtonSelected]}
+                        className={`rounded-xl p-4 items-center border-2 ${
+                          timezone === tz.value ? '' : ''
+                        }`}
+                        style={{
+                          borderColor: timezone === tz.value ? '#90CDF4' : '#E0E0E0',
+                          backgroundColor: timezone === tz.value ? '#E0F2FE' : 'white',
+                        }}
                         onPress={() => setTimezone(tz.value)}
+                        activeOpacity={0.7}
                       >
-                        <Text style={[styles.timezoneButtonText, timezone === tz.value && styles.timezoneButtonTextSelected]}>
+                        <Text
+                          className="text-sm font-medium"
+                          style={{
+                            color: timezone === tz.value ? '#90CDF4' : '#333',
+                            fontWeight: timezone === tz.value ? '600' : '500',
+                          }}
+                        >
                           {tz.label}
                         </Text>
                       </TouchableOpacity>
@@ -305,242 +344,55 @@ const ProfileScreen = ({ navigation, userToken, onLogout }) => {
                   </View>
                 </ScrollView>
               ) : (
-                <View style={[styles.input, styles.displayValue]}>
-                  <Text style={styles.displayText}>
+                <View className="bg-gray-50 rounded-xl p-4">
+                  <Text className="text-base text-gray-900">
                     {TIMEZONES.find(tz => tz.value === timezone)?.label || timezone || 'Not set'}
                   </Text>
                 </View>
               )}
             </View>
+
+            {/* Save/Cancel Buttons */}
+            {isEditing && (
+              <View className="flex-row gap-3 mt-4">
+                <TouchableOpacity
+                  className="flex-1 rounded-xl p-4 items-center justify-center bg-white border-2"
+                  style={{ borderColor: '#E0E0E0' }}
+                  onPress={handleCancel}
+                  disabled={saving}
+                  activeOpacity={0.7}
+                >
+                  <Text className="text-base font-semibold text-gray-900">Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  className="flex-1 rounded-xl p-4 items-center justify-center"
+                  style={{ backgroundColor: saving ? '#B0BEC5' : '#90CDF4' }}
+                  onPress={handleSave}
+                  disabled={saving}
+                  activeOpacity={0.7}
+                >
+                  {saving ? (
+                    <ActivityIndicator color="white" />
+                  ) : (
+                    <Text className="text-base font-semibold text-white">Save Changes</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
-
-          {isEditing && (
-            <View style={styles.buttonRow}>
-              <TouchableOpacity
-                style={[styles.cancelButton, saving && styles.buttonDisabled]}
-                onPress={handleCancel}
-                disabled={saving}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-                onPress={handleSave}
-                disabled={saving}
-              >
-                {saving ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.saveButtonText}>Save Changes</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          )}
-
         </ScrollView>
       </KeyboardAvoidingView>
-    </View>
+
+      <CreateAccountPrompt
+        visible={showCreateAccountPrompt}
+        onClose={() => {
+          setShowCreateAccountPrompt(false);
+          navigation.goBack();
+        }}
+        message="Create an account to view and edit your profile."
+      />
+    </SafeAreaView>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  keyboardView: {
-    flex: 1,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 20,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 20,
-    marginBottom: 30,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  editButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: '#4285F4',
-  },
-  editButtonText: {
-    fontSize: 16,
-    color: '#fff',
-    fontWeight: '600',
-  },
-  formContainer: {
-    width: '100%',
-    marginBottom: 20,
-  },
-  inputGroup: {
-    marginBottom: 25,
-  },
-  label: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 10,
-  },
-  input: {
-    width: '100%',
-    height: 50,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    paddingHorizontal: 15,
-    fontSize: 16,
-    backgroundColor: '#fff',
-  },
-  inputDisabled: {
-    backgroundColor: '#fff',
-    color: '#999',
-  },
-  displayValue: {
-    justifyContent: 'center',
-    paddingHorizontal: 15,
-    backgroundColor: '#fff',
-  },
-  displayText: {
-    fontSize: 16,
-    color: '#333',
-  },
-  helperText: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 5,
-  },
-  dateButton: {
-    width: '100%',
-    height: 50,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-  dateButtonText: {
-    fontSize: 16,
-    color: '#333',
-  },
-  genderContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  genderButton: {
-    flex: 1,
-    minWidth: '45%',
-    padding: 15,
-    borderWidth: 2,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-  genderButtonSelected: {
-    borderColor: '#4285F4',
-    backgroundColor: '#E3F2FD',
-  },
-  genderButtonText: {
-    fontSize: 14,
-    color: '#333',
-    fontWeight: '500',
-  },
-  genderButtonTextSelected: {
-    color: '#4285F4',
-    fontWeight: '600',
-  },
-  timezoneScrollView: {
-    maxHeight: 300,
-    width: '100%',
-  },
-  timezoneContainer: {
-    width: '100%',
-    gap: 10,
-  },
-  timezoneButton: {
-    width: '100%',
-    padding: 15,
-    borderWidth: 2,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-  timezoneButtonSelected: {
-    borderColor: '#4285F4',
-    backgroundColor: '#E3F2FD',
-  },
-  timezoneButtonText: {
-    fontSize: 14,
-    color: '#333',
-    fontWeight: '500',
-  },
-  timezoneButtonTextSelected: {
-    color: '#4285F4',
-    fontWeight: '600',
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 20,
-  },
-  saveButton: {
-    flex: 1,
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-    backgroundColor: '#4285F4',
-    minHeight: 50,
-  },
-  saveButtonDisabled: {
-    opacity: 0.6,
-  },
-  saveButtonText: {
-    fontSize: 16,
-    color: '#fff',
-    fontWeight: '600',
-  },
-  cancelButton: {
-    flex: 1,
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#ddd',
-    backgroundColor: '#fff',
-    minHeight: 50,
-  },
-  cancelButtonText: {
-    fontSize: 16,
-    color: '#333',
-    fontWeight: '600',
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-});
-
 export default ProfileScreen;
-
