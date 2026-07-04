@@ -35,6 +35,46 @@ class OnboardingService {
     return this.markOnboardingCompleted();
   }
 
+  async markPendingPaywall() {
+    try {
+      await AsyncStorage.setItem('pending_post_onboarding_paywall', 'true');
+    } catch (error) {
+      console.error('Error marking pending paywall:', error);
+    }
+  }
+
+  async hasPendingPaywall() {
+    try {
+      const pending = await AsyncStorage.getItem('pending_post_onboarding_paywall');
+      return pending === 'true';
+    } catch (error) {
+      console.error('Error checking pending paywall:', error);
+      return false;
+    }
+  }
+
+  async consumePendingPaywall() {
+    try {
+      const pending = await AsyncStorage.getItem('pending_post_onboarding_paywall');
+      if (pending === 'true') {
+        await AsyncStorage.removeItem('pending_post_onboarding_paywall');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Error consuming pending paywall:', error);
+      return false;
+    }
+  }
+
+  async clearPendingPaywall() {
+    try {
+      await AsyncStorage.removeItem('pending_post_onboarding_paywall');
+    } catch (error) {
+      console.error('Error clearing pending paywall:', error);
+    }
+  }
+
   /**
    * Get questionnaire answers
    */
@@ -150,7 +190,7 @@ class OnboardingService {
       if (questionnaireAnswers) {
         try {
           const { clerkAxios } = await import('../utils/clerkAxios');
-          await clerkAxios.post(
+          await clerkAxios.put(
             `/user/profile`,
             {
               onboarding_questionnaire: questionnaireAnswers,

@@ -11,6 +11,7 @@ const caregiverRoutes = require('./routes/caregivers');
 const refillRoutes = require('./routes/refills');
 const vitalsRoutes = require('./routes/vitals');
 const appointmentRoutes = require('./routes/appointments');
+const reportsRoutes = require('./routes/reports');
 
 // Initialize Express app
 const app = express();
@@ -63,10 +64,22 @@ app.use('/caregivers', caregiverRoutes);
 app.use('/refills', refillRoutes);
 app.use('/vitals', vitalsRoutes);
 app.use('/appointments', appointmentRoutes);
+app.use('/reports', reportsRoutes);
 
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({ message: 'Route not found' });
+  console.log('❌ 404 - Route not found:');
+  console.log('   Method:', req.method);
+  console.log('   URL:', req.url);
+  console.log('   Path:', req.path);
+  console.log('   Original URL:', req.originalUrl);
+  console.log('   Query:', req.query);
+  res.status(404).json({ 
+    message: 'Route not found',
+    path: req.path,
+    method: req.method,
+    url: req.url
+  });
 });
 
 // Error handler

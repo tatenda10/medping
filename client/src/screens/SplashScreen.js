@@ -78,19 +78,11 @@ const styles = StyleSheet.create({
   },
   getStartedButton: {
     width: '100%',
-    backgroundColor: '#4285F4',
+    backgroundColor: '#90CDF4',
     paddingVertical: 16,
-    borderRadius: 12,
+    borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#4285F4',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 4.65,
-    elevation: 8,
   },
   getStartedText: {
     color: '#fff',

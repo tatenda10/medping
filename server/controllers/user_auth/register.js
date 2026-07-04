@@ -1,5 +1,5 @@
 const bcrypt = require('bcryptjs');
-const prisma = require('../../config/database');
+const { query, transaction } = require('../../config/mysql');
 const { generateToken } = require('../../middleware/auth');
 
 /**
@@ -22,10 +22,14 @@ const register = async (req, res) => {
       });
     }
 
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const trimmedName = String(name).trim();
+
     // Check if user already exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
-    });
+    const existingRows = await query('SELECT id FROM users WHERE email = ? LIMIT 1', [
+      normalizedEmail,
+    ]);
+    const existingUser = existingRows?.[0] || null;
 
     if (existingUser) {
       return res.status(409).json({ 
@@ -37,39 +41,45 @@ const register = async (req, res) => {
     const saltRounds = 10;
     const password_hash = await bcrypt.hash(password, saltRounds);
 
-    // Create user
-    const user = await prisma.user.create({
-      data: {
-        email: email.toLowerCase(),
-        name: name.trim(),
-        password_hash,
-        auth_provider: 'email',
-        is_verified: false, // Email verification can be added later
-      },
-    });
+    // Create user + user profile in a transaction
+    const created = await transaction(async (tx) => {
+      const insertUserRes = await tx.execute(
+        `INSERT INTO users (id, email, name, password_hash, auth_provider, is_verified, role, created_at, updated_at)
+         VALUES (UUID(), ?, ?, ?, 'email', 0, 'user', NOW(), NOW())`,
+        [normalizedEmail, trimmedName, password_hash]
+      );
 
-    // Create user profile
-    await prisma.userProfile.create({
-      data: {
-        user_id: user.id,
-        onboarding_completed: false,
-      },
+      // Fetch inserted user (we need the generated UUID)
+      // MySQL UUID() is generated server-side; we retrieve by email.
+      const userRows = await tx.query(
+        `SELECT id, email, name, role, auth_provider, is_verified, created_at, updated_at
+         FROM users
+         WHERE email = ?
+         LIMIT 1`,
+        [normalizedEmail]
+      );
+      const user = userRows?.[0];
+
+      await tx.execute(
+        `INSERT INTO user_profiles (id, user_id, onboarding_completed, created_at, updated_at)
+         VALUES (UUID(), ?, 0, NOW(), NOW())`,
+        [user.id]
+      );
+
+      return user;
     });
 
     // Generate JWT token
     const token = generateToken({
-      id: user.id,
-      email: user.email,
-      role: user.role,
+      id: created.id,
+      email: created.email,
+      role: created.role,
     });
-
-    // Remove password_hash from response
-    const { password_hash: _, ...userWithoutPassword } = user;
 
     res.status(201).json({
       success: true,
       message: 'User registered successfully',
-      user: userWithoutPassword,
+      user: created,
       token,
     });
   } catch (error) {

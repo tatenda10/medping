@@ -19,6 +19,9 @@ import databaseService from '../services/databaseService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { clerkAxios } from '../utils/clerkAxios';
 import syncService from '../services/syncService';
+import BASE_URL from '../context/Api';
+import axios from 'axios';
+import { getAuthToken } from '../utils/authToken';
 
 const screenWidth = Dimensions.get('window').width;
 
@@ -69,7 +72,7 @@ const ExerciseTrackingScreen = ({ navigation }) => {
         const online = await syncService.isOnline();
         if (online) {
           try {
-            const token = await AsyncStorage.getItem('authToken');
+            const token = await getAuthToken();
             if (token) {
               const response = await axios.get(`${BASE_URL}/health-logs?type=exercise`, {
                 headers: { 'Authorization': `Bearer ${token}` },

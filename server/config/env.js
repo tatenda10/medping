@@ -10,6 +10,13 @@ module.exports = {
   // JWT
   JWT_SECRET: process.env.JWT_SECRET,
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
+
+  // Clerk
+  CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY,
+  CLERK_JWT_KEY: process.env.CLERK_JWT_KEY,
+  CLERK_AUTHORIZED_PARTIES: process.env.CLERK_AUTHORIZED_PARTIES
+    ? process.env.CLERK_AUTHORIZED_PARTIES.split(',').map((value) => value.trim()).filter(Boolean)
+    : undefined,
   
   // Google OAuth
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
@@ -28,5 +35,10 @@ module.exports = {
   
   // CORS
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:19006',
+
+  // Infobip SMS
+  INFOBIP_API_KEY: process.env.INFOBIP_API_KEY,
+  INFOBIP_BASE_URL: process.env.INFOBIP_BASE_URL || 'https://api.infobip.com',
+  INFOBIP_SMS_FROM: process.env.INFOBIP_SMS_FROM,
 };
 

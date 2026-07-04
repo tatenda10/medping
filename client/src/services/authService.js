@@ -68,6 +68,88 @@ class AuthService {
   }
 
   /**
+   * Request a password reset code to be sent to the user's email
+   */
+  async requestPasswordReset(email) {
+    try {
+      const response = await axios.post(`${BASE_URL}/user-auth/forgot-password`, {
+        email,
+      });
+
+      return {
+        success: true,
+        message:
+          response.data?.message ||
+          'If that email exists, a reset code has been sent.',
+      };
+    } catch (error) {
+      console.error('Request password reset error:', error);
+      return {
+        success: false,
+        error:
+          error.response?.data?.error ||
+          error.message ||
+          'Failed to request password reset.',
+      };
+    }
+  }
+
+  /**
+   * Verify reset code (no password change yet)
+   */
+  async verifyResetCode(email, code) {
+    try {
+      const response = await axios.post(`${BASE_URL}/user-auth/verify-reset-code`, {
+        email,
+        code,
+      });
+
+      return {
+        success: true,
+        resetId: response.data?.resetId,
+      };
+    } catch (error) {
+      console.error('Verify reset code error:', error);
+      return {
+        success: false,
+        error:
+          error.response?.data?.error ||
+          error.message ||
+          'Failed to verify code.',
+      };
+    }
+  }
+
+  /**
+   * Reset password using email + code + new password
+   */
+  async resetPassword({ email, code, newPassword, resetId }) {
+    try {
+      const response = await axios.post(`${BASE_URL}/user-auth/reset-password`, {
+        email,
+        code,
+        newPassword,
+        resetId,
+      });
+
+      return {
+        success: true,
+        message:
+          response.data?.message || 'Password has been reset successfully.',
+      };
+    } catch (error) {
+      console.error('Reset password error:', error);
+      return {
+        success: false,
+        error:
+          error.response?.data?.error ||
+          error.message ||
+          'Failed to reset password.',
+      };
+    }
+  }
+
+  /**
    * Sign in with Google using server-side OAuth flow
    * Flow: Client -> Server -> Google -> Server -> Client (with JWT)
    */

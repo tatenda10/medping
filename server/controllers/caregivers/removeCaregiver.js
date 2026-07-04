@@ -1,4 +1,4 @@
-const prisma = require('../../config/database');
+const { query } = require('../../config/mysql');
 
 const removeCaregiver = async (req, res) => {
   try {
@@ -6,9 +6,10 @@ const removeCaregiver = async (req, res) => {
     const userId = req.user.id;
 
     // Find the relationship
-    const relationship = await prisma.caregiverRelationship.findUnique({
-      where: { id: relationshipId },
-    });
+    const rows = await query('SELECT * FROM caregiver_relationships WHERE id = ? LIMIT 1', [
+      relationshipId,
+    ]);
+    const relationship = rows?.[0] || null;
 
     if (!relationship) {
       return res.status(404).json({
@@ -26,9 +27,11 @@ const removeCaregiver = async (req, res) => {
     }
 
     // Delete the relationship
-    await prisma.caregiverRelationship.delete({
-      where: { id: relationshipId },
-    });
+    await query(
+      `DELETE FROM caregiver_relationships
+       WHERE id = ? AND (caregiver_id = ? OR care_recipient_id = ?)`,
+      [relationshipId, userId, userId]
+    );
 
     res.json({
       success: true,

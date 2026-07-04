@@ -1,119 +1,146 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuth as useClerkAuth, useClerk, useUser } from '@clerk/expo';
+import { setClerkTokenGetter, setUnauthorizedHandler } from '../utils/clerkAxios';
 
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isChecking, setIsChecking] = useState(true);
   const [authToken, setAuthToken] = useState(null);
-  const authCacheRef = useRef({ token: null, timestamp: 0 });
-  const CACHE_DURATION = 5000; // 5 seconds cache
+  const { isLoaded, isSignedIn, userId, getToken } = useClerkAuth({
+    treatPendingAsSignedOut: false,
+  });
+  const { user: clerkUser } = useUser();
+  const { signOut } = useClerk();
 
-  // Fast synchronous check using cache
-  const getCachedAuth = () => {
-    const now = Date.now();
-    if (authCacheRef.current.token !== null && (now - authCacheRef.current.timestamp) < CACHE_DURATION) {
-      return authCacheRef.current.token;
-    }
-    return null;
-  };
-
-  // Fast check - tries cache first, then async
-  const checkAuthFast = async () => {
-    // Try cache first
-    const cachedToken = getCachedAuth();
-    if (cachedToken !== null) {
-      setIsAuthenticated(true);
-      setAuthToken(cachedToken);
-      setIsChecking(false);
-      return cachedToken;
-    }
-
-    // If no cache, do async check
-    try {
-      const token = await AsyncStorage.getItem('authToken');
-      const hasToken = !!token;
-      
-      // Update cache
-      authCacheRef.current = {
-        token: token,
-        timestamp: Date.now(),
-      };
-      
-      setIsAuthenticated(hasToken);
-      setAuthToken(token);
-      setIsChecking(false);
-      return token;
-    } catch (error) {
-      console.error('Error checking auth:', error);
-      setIsAuthenticated(false);
-      setAuthToken(null);
-      authCacheRef.current = { token: null, timestamp: 0 };
-      setIsChecking(false);
+  const user = useMemo(() => {
+    if (!clerkUser || !userId) {
       return null;
     }
-  };
 
-  // Initial check on mount
+    return {
+      id: userId,
+      email: clerkUser.primaryEmailAddress?.emailAddress || clerkUser.emailAddresses?.[0]?.emailAddress || null,
+      name: clerkUser.fullName || clerkUser.username || clerkUser.firstName || 'User',
+      first_name: clerkUser.firstName || null,
+      last_name: clerkUser.lastName || null,
+      profile_image_url: clerkUser.imageUrl || null,
+      auth_provider: 'clerk',
+      is_verified: true,
+    };
+  }, [clerkUser, userId]);
+
   useEffect(() => {
-    checkAuthFast();
-  }, []);
+    let cancelled = false;
 
-  // Update auth state
-  const updateAuth = async (token) => {
-    if (token) {
-      await AsyncStorage.setItem('authToken', token);
-      authCacheRef.current = {
-        token: token,
-        timestamp: Date.now(),
-      };
-      setIsAuthenticated(true);
-      setAuthToken(token);
-    } else {
-      await AsyncStorage.removeItem('authToken');
-      authCacheRef.current = { token: null, timestamp: 0 };
-      setIsAuthenticated(false);
+    const syncCompatibilityState = async () => {
+      if (!isLoaded) {
+        return;
+      }
+
+      if (!isSignedIn || !userId) {
+        setAuthToken(null);
+        await AsyncStorage.removeItem('userData');
+        return;
+      }
+
+      try {
+        const token = await getToken();
+        if (!cancelled) {
+          setAuthToken(token || null);
+        }
+
+        if (user) {
+          await AsyncStorage.setItem('userData', JSON.stringify(user));
+        }
+      } catch (error) {
+        console.error('Error syncing Clerk auth state:', error);
+        if (!cancelled) {
+          setAuthToken(null);
+        }
+      }
+    };
+
+    syncCompatibilityState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [getToken, isLoaded, isSignedIn, user, userId]);
+
+  useEffect(() => {
+    if (!isLoaded) {
+      return;
+    }
+
+    setClerkTokenGetter(async () => {
+      if (!isSignedIn) {
+        return null;
+      }
+
+      return (await getToken()) || null;
+    });
+
+    setUnauthorizedHandler(async () => {
+      console.warn('Session expired or unauthorized — signing out');
+      await signOut();
       setAuthToken(null);
+      await AsyncStorage.removeItem('userData');
+    });
+
+    return () => {
+      setClerkTokenGetter(null);
+      setUnauthorizedHandler(null);
+    };
+  }, [getToken, isLoaded, isSignedIn, signOut]);
+
+  const updateAuth = async () => {
+    if (!isSignedIn) {
+      setAuthToken(null);
+      await AsyncStorage.removeItem('userData');
+      return null;
     }
-    setIsChecking(false);
+
+    const token = await getToken();
+    setAuthToken(token || null);
+
+    if (user) {
+      await AsyncStorage.setItem('userData', JSON.stringify(user));
+    }
+
+    return token || null;
   };
 
-  // Clear auth
   const clearAuth = async () => {
-    await AsyncStorage.removeItem('authToken');
-    authCacheRef.current = { token: null, timestamp: 0 };
-    setIsAuthenticated(false);
-    setAuthToken(null);
-    setIsChecking(false);
-  };
-
-  // Refresh auth check
-  const refreshAuth = async () => {
-    setIsChecking(true);
-    await checkAuthFast();
-  };
-
-  // Synchronous check (uses cache and state)
-  const isAuthSync = () => {
-    // First check cache for immediate response
-    const cachedToken = getCachedAuth();
-    if (cachedToken !== null) {
-      return true;
+    try {
+      await signOut();
+    } catch (error) {
+      console.warn('Clerk signOut error:', error?.message);
     }
-    // Fallback to state if cache is empty/expired but state says authenticated
-    // This handles cases where cache expired but user is still logged in
-    return isAuthenticated;
+    setAuthToken(null);
+    await AsyncStorage.multiRemove(['userData', 'authToken']);
+  };
+
+  const refreshAuth = async () => {
+    return updateAuth();
+  };
+
+  const isAuthSync = () => {
+    return isLoaded && isSignedIn === true;
   };
 
   const value = {
-    isAuthenticated,
-    isChecking,
+    isAuthenticated: isSignedIn === true,
+    isChecking: !isLoaded,
+    isLoaded,
     authToken,
+    user,
+    userId: userId || null,
     updateAuth,
     clearAuth,
     refreshAuth,
-    isAuthSync, // Fast synchronous check
+    isAuthSync,
+    getToken,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -126,4 +153,3 @@ export const useAuth = () => {
   }
   return context;
 };
-

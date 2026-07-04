@@ -1,4 +1,4 @@
-const prisma = require('../../config/database');
+const { query, transaction } = require('../../config/mysql');
 
 /**
  * Get user profile
@@ -7,23 +7,54 @@ const getUserProfile = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        profile: true,
-      },
-    });
+    const rows = await query(
+      `SELECT 
+         u.id, u.email, u.name, u.phone_number, u.profile_image_url,
+         u.auth_provider, u.role, u.timezone, u.preferred_notification_sound,
+         u.is_verified, u.created_at, u.updated_at,
+         up.id as profile_id, up.age, up.gender, up.onboarding_completed as profile_onboarding_completed,
+         up.created_at as profile_created_at, up.updated_at as profile_updated_at
+       FROM users u
+       LEFT JOIN user_profiles up ON up.user_id = u.id
+       WHERE u.id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    const user = rows?.[0] || null;
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Remove sensitive data
-    const { password_hash, ...userWithoutPassword } = user;
+    const shapedUser = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      phone_number: user.phone_number,
+      profile_image_url: user.profile_image_url,
+      auth_provider: user.auth_provider,
+      role: user.role,
+      timezone: user.timezone,
+      preferred_notification_sound: user.preferred_notification_sound,
+      is_verified: !!user.is_verified,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
+      profile: user.profile_id
+        ? {
+            id: user.profile_id,
+            user_id: user.id,
+            age: user.age,
+            gender: user.gender,
+            onboarding_completed: !!user.profile_onboarding_completed,
+            created_at: user.profile_created_at,
+            updated_at: user.profile_updated_at,
+          }
+        : null,
+    };
 
     res.json({
       success: true,
-      user: userWithoutPassword,
+      user: shapedUser,
     });
   } catch (error) {
     console.error('Error fetching user profile:', error);
@@ -40,44 +71,108 @@ const getUserProfile = async (req, res) => {
 const updateUserProfile = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { name, age, gender, timezone, preferred_notification_sound } = req.body;
+    const { name, age, gender, timezone, preferred_notification_sound, phone_number } = req.body;
 
-    // Update user basic info
-    const updateData = {};
-    if (name !== undefined) updateData.name = name;
-    if (timezone !== undefined) updateData.timezone = timezone;
-    if (preferred_notification_sound !== undefined) {
-      updateData.preferred_notification_sound = preferred_notification_sound;
-    }
+    await transaction(async (tx) => {
+      const userFields = [];
+      const userParams = [];
+      if (name !== undefined) {
+        userFields.push('name = ?');
+        userParams.push(name);
+      }
+      if (timezone !== undefined) {
+        userFields.push('timezone = ?');
+        userParams.push(timezone);
+      }
+      if (preferred_notification_sound !== undefined) {
+        userFields.push('preferred_notification_sound = ?');
+        userParams.push(preferred_notification_sound);
+      }
+      if (phone_number !== undefined) {
+        userFields.push('phone_number = ?');
+        userParams.push(phone_number ? String(phone_number).trim() : null);
+      }
+      if (userFields.length > 0) {
+        userFields.push('updated_at = NOW()');
+        await tx.execute(
+          `UPDATE users SET ${userFields.join(', ')} WHERE id = ?`,
+          [...userParams, userId]
+        );
+      }
 
-    const user = await prisma.user.update({
-      where: { id: userId },
-      data: updateData,
+      // Upsert profile (avoid subquery on same table — MySQL ER_UPDATE_TABLE_USED)
+      if (age !== undefined || gender !== undefined) {
+        const existingProfiles = await tx.query(
+          'SELECT id FROM user_profiles WHERE user_id = ? LIMIT 1',
+          [userId]
+        );
+        const existingProfile = existingProfiles?.[0] || null;
+
+        if (existingProfile) {
+          await tx.execute(
+            `UPDATE user_profiles
+             SET age = ?, gender = ?, updated_at = NOW()
+             WHERE user_id = ?`,
+            [age ?? null, gender ?? null, userId]
+          );
+        } else {
+          const profileIdRows = await tx.query('SELECT UUID() as id');
+          const profileId = profileIdRows?.[0]?.id;
+          await tx.execute(
+            `INSERT INTO user_profiles (id, user_id, age, gender, onboarding_completed, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 0, NOW(), NOW())`,
+            [profileId, userId, age ?? null, gender ?? null]
+          );
+        }
+      }
     });
 
-    // Update or create user profile
-    const profileData = {};
-    if (age !== undefined) profileData.age = age;
-    if (gender !== undefined) profileData.gender = gender;
+    const rows = await query(
+      `SELECT 
+         u.id, u.email, u.name, u.phone_number, u.profile_image_url,
+         u.auth_provider, u.role, u.timezone, u.preferred_notification_sound,
+         u.is_verified, u.created_at, u.updated_at,
+         up.id as profile_id, up.age, up.gender, up.onboarding_completed as profile_onboarding_completed,
+         up.created_at as profile_created_at, up.updated_at as profile_updated_at
+       FROM users u
+       LEFT JOIN user_profiles up ON up.user_id = u.id
+       WHERE u.id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    const user = rows?.[0] || null;
 
-    const profile = await prisma.userProfile.upsert({
-      where: { user_id: userId },
-      update: profileData,
-      create: {
-        user_id: userId,
-        ...profileData,
-      },
-    });
-
-    // Remove sensitive data
-    const { password_hash, ...userWithoutPassword } = user;
+    const shapedUser = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      phone_number: user.phone_number,
+      profile_image_url: user.profile_image_url,
+      auth_provider: user.auth_provider,
+      role: user.role,
+      timezone: user.timezone,
+      preferred_notification_sound: user.preferred_notification_sound,
+      is_verified: !!user.is_verified,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
+      profile: user.profile_id
+        ? {
+            id: user.profile_id,
+            user_id: user.id,
+            age: user.age,
+            gender: user.gender,
+            onboarding_completed: !!user.profile_onboarding_completed,
+            created_at: user.profile_created_at,
+            updated_at: user.profile_updated_at,
+          }
+        : null,
+    };
 
     res.json({
       success: true,
       message: 'Profile updated successfully',
       user: {
-        ...userWithoutPassword,
-        profile,
+        ...shapedUser,
       },
     });
   } catch (error) {
@@ -97,47 +192,84 @@ const completeOnboarding = async (req, res) => {
     const userId = req.user.id;
     const { age, gender, timezone, preferred_notification_sound } = req.body;
 
-    // Update user
-    const userUpdateData = {};
-    if (timezone) userUpdateData.timezone = timezone;
-    if (preferred_notification_sound) {
-      userUpdateData.preferred_notification_sound = preferred_notification_sound;
-    }
+    await transaction(async (tx) => {
+      const userFields = [];
+      const userParams = [];
+      if (timezone) {
+        userFields.push('timezone = ?');
+        userParams.push(timezone);
+      }
+      if (preferred_notification_sound) {
+        userFields.push('preferred_notification_sound = ?');
+        userParams.push(preferred_notification_sound);
+      }
+      if (userFields.length > 0) {
+        userFields.push('updated_at = NOW()');
+        await tx.execute(
+          `UPDATE users SET ${userFields.join(', ')} WHERE id = ?`,
+          [...userParams, userId]
+        );
+      }
 
-    await prisma.user.update({
-      where: { id: userId },
-      data: userUpdateData,
+      const profileIdRows = await tx.query('SELECT UUID() as id');
+      const profileId = profileIdRows?.[0]?.id;
+      await tx.execute(
+        `INSERT INTO user_profiles (id, user_id, age, gender, onboarding_completed, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 1, NOW(), NOW())
+         ON DUPLICATE KEY UPDATE
+           age = COALESCE(VALUES(age), age),
+           gender = COALESCE(VALUES(gender), gender),
+           onboarding_completed = 1,
+           updated_at = NOW()`,
+        [profileId, userId, age ?? null, gender ?? null]
+      );
     });
 
-    // Update or create profile and mark onboarding as complete
-    await prisma.userProfile.upsert({
-      where: { user_id: userId },
-      update: {
-        age: age || undefined,
-        gender: gender || undefined,
-        onboarding_completed: true,
-      },
-      create: {
-        user_id: userId,
-        age: age || null,
-        gender: gender || null,
-        onboarding_completed: true,
-      },
-    });
+    const rows = await query(
+      `SELECT 
+         u.id, u.email, u.name, u.phone_number, u.profile_image_url,
+         u.auth_provider, u.role, u.timezone, u.preferred_notification_sound,
+         u.is_verified, u.created_at, u.updated_at,
+         up.id as profile_id, up.age, up.gender, up.onboarding_completed as profile_onboarding_completed,
+         up.created_at as profile_created_at, up.updated_at as profile_updated_at
+       FROM users u
+       LEFT JOIN user_profiles up ON up.user_id = u.id
+       WHERE u.id = ?
+       LIMIT 1`,
+      [userId]
+    );
+    const user = rows?.[0] || null;
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        profile: true,
-      },
-    });
-
-    const { password_hash, ...userWithoutPassword } = user;
+    const shapedUser = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      phone_number: user.phone_number,
+      profile_image_url: user.profile_image_url,
+      auth_provider: user.auth_provider,
+      role: user.role,
+      timezone: user.timezone,
+      preferred_notification_sound: user.preferred_notification_sound,
+      is_verified: !!user.is_verified,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
+      profile: user.profile_id
+        ? {
+            id: user.profile_id,
+            user_id: user.id,
+            age: user.age,
+            gender: user.gender,
+            onboarding_completed: !!user.profile_onboarding_completed,
+            created_at: user.profile_created_at,
+            updated_at: user.profile_updated_at,
+          }
+        : null,
+    };
 
     res.json({
       success: true,
       message: 'Onboarding completed successfully',
-      user: userWithoutPassword,
+      user: shapedUser,
     });
   } catch (error) {
     console.error('Error completing onboarding:', error);

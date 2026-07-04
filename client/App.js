@@ -1,22 +1,21 @@
 import React, { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { ClerkProvider } from '@clerk/clerk-expo';
+import { ClerkProvider } from '@clerk/expo';
+import { tokenCache } from '@clerk/expo/token-cache';
 import AppNavigator from './src/navigation/AppNavigator';
 import notificationService from './src/services/notificationService';
 import databaseService from './src/services/databaseService';
 import syncService from './src/services/syncService';
 import backgroundTaskService from './src/services/backgroundTaskService';
 import firebaseService from './src/services/firebaseService';
-import { ClerkAuthProvider } from './src/context/ClerkAuthContext';
-import { setClerkTokenGetter } from './src/utils/clerkAxios';
+import { AuthProvider } from './src/context/AuthContext';
+import { SubscriptionProvider } from './src/context/SubscriptionContext';
 import "./global.css"
 
-// Get Clerk publishable key from environment variables
-// You'll need to add EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY to your .env file
-const clerkPublishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
+const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
-if (!clerkPublishableKey) {
-  console.warn('⚠️ EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY is not set. Clerk authentication will not work.');
+if (!publishableKey) {
+  throw new Error('Missing EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY in client/.env');
 }
 
 export default function App() {
@@ -60,17 +59,13 @@ export default function App() {
   }, []);
 
   return (
-    <ClerkProvider 
-      publishableKey={clerkPublishableKey}
-      // Configure OAuth redirect URLs for Expo
-      afterSignInUrl="mediping://"
-      afterSignUpUrl="mediping://"
-    >
-      <ClerkAuthProvider>
-        <AppNavigator />
-        <StatusBar style="auto" />
-      </ClerkAuthProvider>
+    <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
+      <AuthProvider>
+        <SubscriptionProvider>
+          <AppNavigator />
+          <StatusBar style="auto" />
+        </SubscriptionProvider>
+      </AuthProvider>
     </ClerkProvider>
   );
 }
-

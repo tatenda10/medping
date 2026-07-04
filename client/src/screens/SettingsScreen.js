@@ -1,18 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert, Platform } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Alert, Platform, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
-import axios from 'axios';
-import BASE_URL from '../context/Api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import databaseService from '../services/databaseService';
 import exportService from '../services/exportService';
 import CreateAccountPrompt from '../components/CreateAccountPrompt';
 import clearAllData from '../utils/clearAllData';
 import { useAuthCheck } from '../hooks/useAuthCheck';
+import { clerkAxios } from '../utils/clerkAxios';
+import { navigationRef } from '../navigation/navigationRef';
+import { openSubscriptionPaywall } from '../navigation/postAuthNavigation';
+import { useSubscription } from '../context/SubscriptionContext';
 
 const SettingsScreen = ({ navigation, onLogout }) => {
   const { isAuthenticated } = useAuthCheck();
+  const { hasPremiumAccess, hasBasicAccess, activeEntitlementIds } = useSubscription();
+  const isSubscribed = hasPremiumAccess || hasBasicAccess || activeEntitlementIds.length > 0;
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -65,19 +69,7 @@ const SettingsScreen = ({ navigation, onLogout }) => {
   const confirmDeleteAccount = async () => {
     setDeleting(true);
     try {
-      const token = await AsyncStorage.getItem('authToken');
-      
-      if (!token) {
-        Alert.alert('Error', 'Authentication token not found');
-        setDeleting(false);
-        return;
-      }
-
-      const response = await axios.delete(`${BASE_URL}/user/account`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
+      const response = await clerkAxios.delete('/user/account');
 
       if (response.data.success) {
         const userData = await AsyncStorage.getItem('userData');
@@ -102,7 +94,7 @@ const SettingsScreen = ({ navigation, onLogout }) => {
         }
 
         try {
-          await AsyncStorage.multiRemove(['authToken', 'userData']);
+          await AsyncStorage.removeItem('userData');
         } catch (storageError) {
           console.warn('Could not clear AsyncStorage:', storageError);
         }
@@ -165,7 +157,7 @@ const SettingsScreen = ({ navigation, onLogout }) => {
   const handleLogout = () => {
     Alert.alert(
       'Log Out',
-      'Are you sure you want to log out?',
+      'Are you sure you want to log out? All local data on this device will be cleared.',
       [
         {
           text: 'Cancel',
@@ -174,9 +166,9 @@ const SettingsScreen = ({ navigation, onLogout }) => {
         {
           text: 'Log Out',
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
             if (onLogout) {
-              onLogout();
+              await onLogout();
             }
           },
         },
@@ -189,28 +181,62 @@ const SettingsScreen = ({ navigation, onLogout }) => {
     return 'VERSION 2.4.1 (BUILD 108)';
   };
 
+  const openSubscription = () => {
+    requireAuth(
+      () => {
+        const rootNav = navigation.getParent()?.getParent();
+        if (rootNav?.navigate) {
+          rootNav.navigate('Subscription');
+          return;
+        }
+        openSubscriptionPaywall();
+      },
+      'Create an account to manage your subscription.'
+    );
+  };
+
   return (
-    <SafeAreaView className="flex-1 bg-white" edges={['top', 'bottom']}>
-      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+    <SafeAreaView className="flex-1 bg-white" edges={['top']}>
+      <ScrollView
+        className="flex-1"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 12 }}
+      >
         {/* Header */}
-        <View className="flex-row items-center px-5 pt-4 pb-3">
-          <TouchableOpacity 
-            className="w-10 h-10 rounded-full bg-gray-100 justify-center items-center mr-3"
-            onPress={() => navigation.goBack()}
-          >
-            <Ionicons name="chevron-back" size={24} color="#333" />
-          </TouchableOpacity>
+        <View className="flex-row items-center px-5 pt-2 pb-2">
           <Text className="text-2xl font-bold text-gray-900 flex-1">Settings</Text>
         </View>
 
+        {/* Guest login */}
+        {!isAuthenticated && (
+          <View className="mx-5 mb-3">
+            <Text className="text-sm text-gray-600 mb-3">
+              Sign in to sync your data, invite caregivers, and manage your account.
+            </Text>
+            <TouchableOpacity
+              className="rounded-xl p-3.5 items-center justify-center mb-2"
+              style={{ backgroundColor: '#90CDF4' }}
+              onPress={() => navigationRef.current?.navigate('Login')}
+              activeOpacity={0.8}
+            >
+              <Text className="text-base font-bold text-white">Log In</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              className="rounded-xl p-3.5 items-center justify-center border-2"
+              style={{ borderColor: '#90CDF4' }}
+              onPress={() => navigationRef.current?.navigate('SignUp')}
+              activeOpacity={0.8}
+            >
+              <Text className="text-base font-semibold" style={{ color: '#90CDF4' }}>Create Account</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* User Profile Card */}
-        {userData && (
+        {isAuthenticated && userData && (
           <TouchableOpacity
-            className="mx-5 mb-6 bg-white rounded-xl p-4 flex-row items-center"
-            onPress={() => requireAuth(
-              () => navigation.navigate('Profile'),
-              'Create an account to view your profile.'
-            )}
+            className="mx-5 mb-3 bg-white rounded-xl p-3.5 flex-row items-center border border-gray-100"
+            onPress={() => navigation.navigate('Profile')}
             activeOpacity={0.7}
           >
             <View className="w-16 h-16 rounded-full justify-center items-center mr-4" style={{ backgroundColor: '#90CDF4' }}>
@@ -224,12 +250,44 @@ const SettingsScreen = ({ navigation, onLogout }) => {
           </TouchableOpacity>
         )}
 
+        {/* Subscription */}
+        <View className="px-5 mb-3">
+          <TouchableOpacity
+            className="rounded-xl p-4 flex-row items-center border border-gray-100"
+            style={{ backgroundColor: isSubscribed ? '#F0FDF4' : '#FFF7ED' }}
+            onPress={openSubscription}
+            activeOpacity={0.8}
+          >
+            <View
+              className="w-10 h-10 rounded-lg justify-center items-center mr-3"
+              style={{ backgroundColor: isSubscribed ? '#BBF7D0' : '#FED7AA' }}
+            >
+              <MaterialIcons
+                name="workspace-premium"
+                size={22}
+                color={isSubscribed ? '#15803D' : '#C2410C'}
+              />
+            </View>
+            <View className="flex-1">
+              <Text className="text-base font-semibold text-gray-900">
+                {isSubscribed ? 'Manage Subscription' : 'Upgrade to Premium'}
+              </Text>
+              <Text className="text-sm text-gray-600 mt-0.5">
+                {isSubscribed
+                  ? 'View your plan and entitlements'
+                  : 'SMS alerts • Caregiver access • Health reports'}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#999" />
+          </TouchableOpacity>
+        </View>
+
         {/* ACCOUNT & SECURITY Section */}
-        <View className="px-5 mb-6">
-          <Text className="text-xs text-gray-600 mb-4 uppercase tracking-wide">Account & Security</Text>
+        <View className="px-5 mb-3">
+          <Text className="text-xs text-gray-600 mb-2 uppercase tracking-wide">Account & Security</Text>
           
           <TouchableOpacity
-            className="bg-white rounded-xl p-4 mb-3 flex-row items-center"
+            className="bg-white rounded-xl p-3.5 mb-2 flex-row items-center border border-gray-100"
             onPress={() => Alert.alert('Coming Soon', 'Notification preferences will be available soon.')}
             activeOpacity={0.7}
           >
@@ -241,7 +299,7 @@ const SettingsScreen = ({ navigation, onLogout }) => {
           </TouchableOpacity>
 
           <TouchableOpacity
-            className="bg-white rounded-xl p-4 mb-3 flex-row items-center"
+            className="bg-white rounded-xl p-3.5 mb-2 flex-row items-center border border-gray-100"
             onPress={() => Alert.alert('Coming Soon', 'Privacy & Security settings will be available soon.')}
             activeOpacity={0.7}
           >
@@ -253,32 +311,12 @@ const SettingsScreen = ({ navigation, onLogout }) => {
           </TouchableOpacity>
         </View>
 
-        {/* MEDICATION Section */}
-        <View className="px-5 mb-6">
-          <Text className="text-xs text-gray-600 mb-4 uppercase tracking-wide">Medication</Text>
-          
-          <TouchableOpacity
-            className="bg-white rounded-xl p-4 mb-3 flex-row items-center"
-            onPress={() => navigation.navigate('AddMedicine')}
-            activeOpacity={0.7}
-          >
-            <View className="w-10 h-10 rounded-lg justify-center items-center mr-3" style={{ backgroundColor: '#E0F2FE' }}>
-              <MaterialIcons name="medication" size={20} color="#90CDF4" />
-            </View>
-            <View className="flex-1">
-              <Text className="text-base text-gray-900">Manage Medications</Text>
-              <Text className="text-sm text-gray-600 mt-1">View and manage your medications</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#999" />
-          </TouchableOpacity>
-        </View>
-
         {/* CAREGIVER ACCESS Section */}
-        <View className="px-5 mb-6">
-          <Text className="text-xs text-gray-600 mb-4 uppercase tracking-wide">Caregiver Access</Text>
+        <View className="px-5 mb-3">
+          <Text className="text-xs text-gray-600 mb-2 uppercase tracking-wide">Caregiver Access</Text>
           
           <TouchableOpacity
-            className="bg-white rounded-xl p-4 mb-3 flex-row items-center"
+            className="bg-white rounded-xl p-3.5 mb-2 flex-row items-center border border-gray-100"
             onPress={() => requireAuth(
               () => navigation.navigate('InviteCaregiver'),
               'Create an account to invite caregivers and share your medication schedule.'
@@ -296,7 +334,7 @@ const SettingsScreen = ({ navigation, onLogout }) => {
           </TouchableOpacity>
 
           <TouchableOpacity
-            className="bg-white rounded-xl p-4 mb-3 flex-row items-center"
+            className="bg-white rounded-xl p-3.5 mb-2 flex-row items-center border border-gray-100"
             onPress={() => requireAuth(
               () => navigation.navigate('CaregiverInvitations'),
               'Create an account to manage caregiver invitations.'
@@ -315,11 +353,11 @@ const SettingsScreen = ({ navigation, onLogout }) => {
         </View>
 
         {/* SUPPORT Section */}
-        <View className="px-5 mb-6">
-          <Text className="text-xs text-gray-600 mb-4 uppercase tracking-wide">Support</Text>
+        <View className="px-5 mb-3">
+          <Text className="text-xs text-gray-600 mb-2 uppercase tracking-wide">Support</Text>
           
           <TouchableOpacity
-            className="bg-white rounded-xl p-4 mb-3 flex-row items-center"
+            className="bg-white rounded-xl p-3.5 mb-2 flex-row items-center border border-gray-100"
             onPress={() => Alert.alert('Help & Support', 'For support, please contact us at support@mediping.app')}
             activeOpacity={0.7}
           >
@@ -331,7 +369,7 @@ const SettingsScreen = ({ navigation, onLogout }) => {
           </TouchableOpacity>
 
           <TouchableOpacity
-            className="bg-white rounded-xl p-4 mb-3 flex-row items-center"
+            className="bg-white rounded-xl p-3.5 mb-2 flex-row items-center border border-gray-100"
             onPress={() => Alert.alert('About MediPing', 'MediPing - Your Smart Medication Reminder & Health Tracker')}
             activeOpacity={0.7}
           >
@@ -345,9 +383,9 @@ const SettingsScreen = ({ navigation, onLogout }) => {
 
         {/* Delete Account Button */}
         {isAuthenticated && (
-          <View className="px-5 mb-4">
+          <View className="px-5 mb-2">
             <TouchableOpacity
-              className="bg-white rounded-xl p-4 flex-row items-center"
+              className="bg-white rounded-xl p-3.5 flex-row items-center border border-gray-100"
               onPress={handleDeleteAccount}
               disabled={deleting}
               activeOpacity={0.7}
@@ -366,7 +404,7 @@ const SettingsScreen = ({ navigation, onLogout }) => {
         {/* Log Out Button */}
         {isAuthenticated && (
           <TouchableOpacity
-            className="mx-5 mb-6 rounded-xl p-4 flex-row items-center justify-center"
+            className="mx-5 mb-3 rounded-xl p-3.5 flex-row items-center justify-center"
             style={{ backgroundColor: '#FFEBEE' }}
             onPress={handleLogout}
             activeOpacity={0.7}
@@ -377,7 +415,7 @@ const SettingsScreen = ({ navigation, onLogout }) => {
         )}
 
         {/* Version */}
-        <View className="px-5 pb-8 items-center">
+        <View className="px-5 pb-1 items-center">
           <Text className="text-xs text-gray-400">{getAppVersion()}</Text>
         </View>
       </ScrollView>

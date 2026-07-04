@@ -1,5 +1,5 @@
 const bcrypt = require('bcryptjs');
-const prisma = require('../../config/database');
+const { query } = require('../../config/mysql');
 const { generateToken } = require('../../middleware/auth');
 
 /**
@@ -16,13 +16,20 @@ const login = async (req, res) => {
       });
     }
 
+    const normalizedEmail = String(email).trim().toLowerCase();
+
     // Find user by email
-    const user = await prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
-      include: {
-        profile: true,
-      },
-    });
+    const rows = await query(
+      `SELECT 
+         u.id, u.email, u.name, u.password_hash, u.role,
+         up.onboarding_completed
+       FROM users u
+       LEFT JOIN user_profiles up ON up.user_id = u.id
+       WHERE u.email = ?
+       LIMIT 1`,
+      [normalizedEmail]
+    );
+    const user = rows?.[0] || null;
 
     if (!user) {
       return res.status(401).json({ 
@@ -33,7 +40,7 @@ const login = async (req, res) => {
     // Check if user has password (email/password auth)
     if (!user.password_hash) {
       return res.status(401).json({ 
-        message: 'This account was created with social login. Please use Google or Apple to sign in.' 
+        message: 'This account does not have a password set. Please use a different sign-in method or reset your password.' 
       });
     }
 
@@ -61,7 +68,7 @@ const login = async (req, res) => {
       message: 'Login successful',
       user: {
         ...userWithoutPassword,
-        onboarding_completed: user.profile?.onboarding_completed || false,
+        onboarding_completed: !!user.onboarding_completed,
       },
       token,
     });

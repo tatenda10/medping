@@ -1,4 +1,4 @@
-const prisma = require('../../config/database');
+const { query } = require('../../config/mysql');
 
 const deleteAppointment = async (req, res) => {
   try {
@@ -6,12 +6,11 @@ const deleteAppointment = async (req, res) => {
     const { id } = req.params;
 
     // Verify appointment belongs to user
-    const appointment = await prisma.appointment.findFirst({
-      where: {
-        id,
-        user_id: userId,
-      },
-    });
+    const existingRows = await query(
+      'SELECT id FROM appointments WHERE id = ? AND user_id = ? LIMIT 1',
+      [id, userId]
+    );
+    const appointment = existingRows?.[0] || null;
 
     if (!appointment) {
       return res.status(404).json({
@@ -20,9 +19,7 @@ const deleteAppointment = async (req, res) => {
       });
     }
 
-    await prisma.appointment.delete({
-      where: { id },
-    });
+    await query('DELETE FROM appointments WHERE id = ? AND user_id = ?', [id, userId]);
 
     res.json({
       success: true,

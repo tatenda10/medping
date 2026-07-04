@@ -1,26 +1,15 @@
-const prisma = require('../../config/database');
+const { query } = require('../../config/mysql');
 
 const listAppointments = async (req, res) => {
   try {
     const userId = req.user.id;
-
-    // Check if prisma is properly initialized
-    if (!prisma || !prisma.appointment) {
-      console.error('Prisma client not properly initialized');
-      return res.status(500).json({
-        success: false,
-        message: 'Database connection error',
-      });
-    }
-
-    const appointments = await prisma.appointment.findMany({
-      where: {
-        user_id: userId,
-      },
-      orderBy: {
-        scheduled_time: 'desc',
-      },
-    });
+    const appointments = await query(
+      `SELECT *
+       FROM appointments
+       WHERE user_id = ?
+       ORDER BY scheduled_time DESC`,
+      [userId]
+    );
 
     res.json({
       success: true,

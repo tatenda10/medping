@@ -20,7 +20,7 @@ import notificationService from '../services/notificationService';
 import databaseService from '../services/databaseService';
 import syncService from '../services/syncService';
 import { MEDICATION_TYPES, getMedicationIcon } from '../utils/medicationIcons';
-import { useAuth } from '../context/ClerkAuthContext';
+import { useAuth } from '../context/AuthContext';
 import CreateAccountPrompt from '../components/CreateAccountPrompt';
 
 const EditMedicineScreen = ({ route, navigation }) => {

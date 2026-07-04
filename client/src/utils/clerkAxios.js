@@ -1,114 +1,116 @@
 import axios from 'axios';
+import { getClerkInstance } from '@clerk/expo';
 import BASE_URL from '../context/Api';
 
-/**
- * Creates an axios instance with Clerk token automatically added to requests
- * Use this instead of regular axios for authenticated API calls
- */
-let getTokenFunction = null;
+const authenticatedAxios = axios.create({
+  baseURL: BASE_URL,
+});
 
-export const setClerkTokenGetter = (getTokenFn) => {
-  getTokenFunction = getTokenFn;
+let clerkTokenGetter = null;
+let unauthorizedHandler = null;
+let handlingUnauthorized = false;
+
+export const setClerkTokenGetter = (getter) => {
+  clerkTokenGetter = typeof getter === 'function' ? getter : null;
 };
 
-/**
- * Get axios instance with Clerk token interceptor
- * This automatically adds the Authorization header with Clerk token
- */
-export const getAuthenticatedAxios = async () => {
-  const instance = axios.create({
-    baseURL: BASE_URL,
-  });
+export const setUnauthorizedHandler = (handler) => {
+  unauthorizedHandler = typeof handler === 'function' ? handler : null;
+};
 
-  // Add request interceptor to include Clerk token
-  instance.interceptors.request.use(
-    async (config) => {
-      if (getTokenFunction) {
+export const getAuthToken = async () => {
+  if (clerkTokenGetter) {
+    try {
+      const token = await clerkTokenGetter();
+      if (token) {
+        return token;
+      }
+    } catch (error) {
+      console.error('Error getting Clerk token from auth context:', error);
+    }
+  }
+
+  try {
+    const clerk = getClerkInstance();
+    return (await clerk.session?.getToken()) || null;
+  } catch (error) {
+    console.error('Error getting Clerk token from Clerk instance:', error);
+    return null;
+  }
+};
+
+export const getAuthHeaders = async (headers = {}) => {
+  const token = await getAuthToken();
+  if (!token) {
+    return headers;
+  }
+
+  return {
+    ...headers,
+    Authorization: `Bearer ${token}`,
+  };
+};
+
+authenticatedAxios.interceptors.request.use(
+  async (config) => {
+    try {
+      const token = await getAuthToken();
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      } else {
+        console.warn(`No Clerk token available for request to: ${config.baseURL}${config.url}`);
+      }
+    } catch (error) {
+      console.error('Error getting Clerk token for request:', error);
+    }
+
+    console.log(`Making request to: ${config.baseURL}${config.url}`);
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+authenticatedAxios.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
+      console.error(`Network Error: Cannot reach server at ${error.config?.baseURL}${error.config?.url}`);
+    } else if (error.response) {
+      const serverMessage = error.response.data?.message || error.response.data?.error;
+      console.error(`Server Error: ${error.response.status} - ${serverMessage || error.response.statusText}`);
+      console.error(`URL: ${error.config?.baseURL}${error.config?.url}`);
+
+      if (error.response.status === 401 && unauthorizedHandler && !handlingUnauthorized) {
+        handlingUnauthorized = true;
         try {
-          const token = await getTokenFunction();
-          if (token) {
-            config.headers.Authorization = `Bearer ${token}`;
-          }
-        } catch (error) {
-          console.error('Error getting Clerk token for request:', error);
+          await unauthorizedHandler();
+        } catch (logoutError) {
+          console.error('Error during unauthorized logout:', logoutError);
+        } finally {
+          handlingUnauthorized = false;
         }
       }
-      // Log the request URL for debugging
-      console.log(`🌐 Making request to: ${config.baseURL}${config.url}`);
-      return config;
-    },
-    (error) => {
-      return Promise.reject(error);
+    } else {
+      console.error('Request Error:', error.message || error);
     }
-  );
 
-  // Add response interceptor for better error logging
-  instance.interceptors.response.use(
-    (response) => {
-      return response;
-    },
-    (error) => {
-      // Better error logging
-      if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
-        console.error(`❌ Network Error: Cannot reach server at ${error.config?.baseURL}${error.config?.url}`);
-        console.error(`   This usually means:`);
-        console.error(`   1. Server is not running or not accessible`);
-        console.error(`   2. IP address has changed (check if ${BASE_URL} is correct)`);
-        console.error(`   3. Firewall is blocking the connection`);
-        console.error(`   4. Client and server are on different networks`);
-      } else if (error.response) {
-        // Server responded with error status
-        console.error(`❌ Server Error: ${error.response.status} - ${error.response.statusText}`);
-        console.error(`   URL: ${error.config?.baseURL}${error.config?.url}`);
-      } else {
-        console.error(`❌ Request Error:`, error.message || error);
-      }
-      return Promise.reject(error);
-    }
-  );
+    return Promise.reject(error);
+  }
+);
 
-  return instance;
-};
-
-/**
- * Check if user is authenticated by trying to get a token
- */
 export const checkAuthentication = async () => {
   try {
-    if (!getTokenFunction) {
-      return false;
-    }
-    const token = await getTokenFunction();
+    const token = await getAuthToken();
     return !!token;
   } catch (error) {
     return false;
   }
 };
 
-/**
- * Helper function to make authenticated API calls
- * Usage: const response = await clerkAxios.get('/medications');
- */
 export const clerkAxios = {
-  get: async (url, config = {}) => {
-    const instance = await getAuthenticatedAxios();
-    return instance.get(url, config);
-  },
-  post: async (url, data, config = {}) => {
-    const instance = await getAuthenticatedAxios();
-    return instance.post(url, data, config);
-  },
-  put: async (url, data, config = {}) => {
-    const instance = await getAuthenticatedAxios();
-    return instance.put(url, data, config);
-  },
-  patch: async (url, data, config = {}) => {
-    const instance = await getAuthenticatedAxios();
-    return instance.patch(url, data, config);
-  },
-  delete: async (url, config = {}) => {
-    const instance = await getAuthenticatedAxios();
-    return instance.delete(url, config);
-  },
+  get: async (url, config = {}) => authenticatedAxios.get(url, config),
+  post: async (url, data, config = {}) => authenticatedAxios.post(url, data, config),
+  put: async (url, data, config = {}) => authenticatedAxios.put(url, data, config),
+  patch: async (url, data, config = {}) => authenticatedAxios.patch(url, data, config),
+  delete: async (url, config = {}) => authenticatedAxios.delete(url, config),
 };
-

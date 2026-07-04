@@ -1,4 +1,4 @@
-const prisma = require('../../config/database');
+const { transaction } = require('../../config/mysql');
 const caregiverNotificationService = require('../../services/caregiverNotificationService');
 
 const updateRefill = async (req, res) => {
@@ -7,62 +7,53 @@ const updateRefill = async (req, res) => {
     const { id } = req.params;
     const { quantity, refill_date, notes } = req.body;
 
-    // Find refill and verify ownership
-    const refill = await prisma.refill.findFirst({
-      where: {
-        id,
-        user_id: userId,
-      },
-      include: {
-        medication: true,
-      },
+    const result = await transaction(async (tx) => {
+      const refillRows = await tx.query(
+        `SELECT r.*, m.quantity_remaining
+         FROM refills r
+         JOIN medications m ON m.id = r.medication_id
+         WHERE r.id = ? AND r.user_id = ?
+         LIMIT 1`,
+        [id, userId]
+      );
+      const refill = refillRows?.[0] || null;
+      if (!refill) return { notFound: true };
+
+      const newQty = quantity !== undefined ? parseInt(quantity, 10) : refill.quantity;
+      const newRefillDate = refill_date ? new Date(refill_date) : refill.refill_date;
+      const newNotes = notes !== undefined ? notes : refill.notes;
+
+      const quantityDiff = newQty - refill.quantity;
+
+      await tx.execute(
+        `UPDATE refills SET quantity = ?, refill_date = ?, notes = ? WHERE id = ? AND user_id = ?`,
+        [newQty, newRefillDate, newNotes, id, userId]
+      );
+
+      if (quantityDiff !== 0) {
+        const currentQuantity = refill.quantity_remaining || 0;
+        const updatedQuantity = Math.max(0, currentQuantity + quantityDiff);
+        await tx.execute(
+          `UPDATE medications SET quantity_remaining = ?, updated_at = NOW() WHERE id = ? AND user_id = ?`,
+          [updatedQuantity, refill.medication_id, userId]
+        );
+      }
+
+      const updatedRows = await tx.query('SELECT * FROM refills WHERE id = ? LIMIT 1', [id]);
+      return { updatedRefill: updatedRows?.[0] || null };
     });
 
-    if (!refill) {
+    if (result.notFound) {
       return res.status(404).json({
         success: false,
         message: 'Refill not found',
       });
     }
 
-    // Calculate quantity difference if quantity changed
-    let quantityDiff = 0;
-    if (quantity !== undefined && quantity !== refill.quantity) {
-      quantityDiff = parseInt(quantity) - refill.quantity;
-    }
-
-    // Update refill
-    const updatedRefill = await prisma.refill.update({
-      where: { id },
-      data: {
-        quantity: quantity !== undefined ? parseInt(quantity) : refill.quantity,
-        refill_date: refill_date ? new Date(refill_date) : refill.refill_date,
-        notes: notes !== undefined ? notes : refill.notes,
-      },
-    });
-
-    // Update medication quantity if quantity changed
-    if (quantityDiff !== 0) {
-      const currentQuantity = refill.medication.quantity_remaining || 0;
-      const newQuantity = Math.max(0, currentQuantity + quantityDiff);
-
-      const updatedMedication = await prisma.medication.update({
-        where: { id: refill.medication_id },
-        data: { quantity_remaining: newQuantity },
-      });
-
-      // Check for low stock and notify caregivers
-      const lowStockThreshold = updatedMedication.low_stock_threshold || 7;
-      if (newQuantity <= lowStockThreshold) {
-        caregiverNotificationService.notifyLowStock(userId, refill.medication_id)
-          .catch(err => console.error('Error notifying caregivers:', err));
-      }
-    }
-
     res.json({
       success: true,
       message: 'Refill updated successfully',
-      refill: updatedRefill,
+      refill: result.updatedRefill,
     });
   } catch (error) {
     console.error('Error updating refill:', error);

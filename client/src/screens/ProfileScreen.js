@@ -3,13 +3,12 @@ import { View, Text, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Tex
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import axios from 'axios';
-import BASE_URL from '../context/Api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import TIMEZONES from '../utils/timezones';
 import { useAuthCheck } from '../hooks/useAuthCheck';
 import CreateAccountPrompt from '../components/CreateAccountPrompt';
 import syncService from '../services/syncService';
+import { clerkAxios } from '../utils/clerkAxios';
 
 const ProfileScreen = ({ navigation, userToken, onLogout }) => {
   const { isAuthenticated } = useAuthCheck();
@@ -46,25 +45,18 @@ const ProfileScreen = ({ navigation, userToken, onLogout }) => {
       }
 
       const online = await syncService.isOnline();
-      if (online) {
+      if (online && isAuthenticated) {
         try {
-          const token = await AsyncStorage.getItem('authToken');
-          if (token) {
-            const response = await axios.get(`${BASE_URL}/user/me`, {
-              headers: {
-                'Authorization': `Bearer ${token}`,
-              },
-            });
+          const response = await clerkAxios.get('/user/me');
 
-            if (response.data.success) {
-              const serverUser = response.data.user;
-              await AsyncStorage.setItem('userData', JSON.stringify(serverUser));
-              setName(serverUser.name || '');
-              setEmail(serverUser.email || '');
-              setTimezone(serverUser.timezone || 'UTC');
-              setAge(serverUser.profile?.age || null);
-              setGender(serverUser.profile?.gender || '');
-            }
+          if (response.data.success) {
+            const serverUser = response.data.user;
+            await AsyncStorage.setItem('userData', JSON.stringify(serverUser));
+            setName(serverUser.name || '');
+            setEmail(serverUser.email || '');
+            setTimezone(serverUser.timezone || 'UTC');
+            setAge(serverUser.profile?.age || null);
+            setGender(serverUser.profile?.gender || '');
           }
         } catch (error) {
           if (error.response?.status !== 401) {
@@ -96,27 +88,12 @@ const ProfileScreen = ({ navigation, userToken, onLogout }) => {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const token = await AsyncStorage.getItem('authToken');
-      const authToken = token || userToken;
-      if (!authToken) {
-        Alert.alert('Error', 'Authentication required');
-        setSaving(false);
-        return;
-      }
-      const response = await axios.put(
-        `${BASE_URL}/user/profile`,
-        {
-          name,
-          age: age || null,
-          gender: gender || null,
-          timezone,
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${authToken}`,
-          },
-        }
-      );
+      const response = await clerkAxios.put('/user/profile', {
+        name,
+        age: age || null,
+        gender: gender || null,
+        timezone,
+      });
 
       if (response.data.success) {
         await AsyncStorage.setItem('userData', JSON.stringify(response.data.user));
@@ -180,11 +157,13 @@ const ProfileScreen = ({ navigation, userToken, onLogout }) => {
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
       >
         <ScrollView
           className="flex-1"
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ paddingBottom: 16 }}
         >
           {/* Header */}
           <View className="flex-row items-center px-5 pt-4 pb-3">

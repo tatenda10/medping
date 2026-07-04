@@ -24,6 +24,9 @@
         "UIBackgroundModes": [
           "fetch",
           "processing"
+        ],
+        "BGTaskSchedulerPermittedIdentifiers": [
+          "com.mediping.app.medication-background-task"
         ]
       }
     },
@@ -41,6 +44,14 @@
       ]
     },
     "plugins": [
+      "expo-secure-store",
+      [
+        "@clerk/expo",
+        {
+          "appleSignIn": true
+        }
+      ],
+      "expo-apple-authentication",
       [
         "expo-build-properties",
         {
@@ -61,7 +72,8 @@
           }
         }
       ],
-      "./plugins/withRemoveAdIdPermission.js"
+      "./plugins/withRemoveAdIdPermission.js",
+      "expo-web-browser"
     ],
     "web": {
       "favicon": "./assets/logo.png",

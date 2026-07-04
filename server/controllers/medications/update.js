@@ -1,4 +1,24 @@
-const prisma = require('../../config/database');
+const { query } = require('../../config/mysql');
+
+function parseMedicationRow(row) {
+  const med = { ...row };
+  if (typeof med.times_of_day === 'string') {
+    try {
+      med.times_of_day = JSON.parse(med.times_of_day);
+    } catch (e) {}
+  }
+  if (typeof med.schedule_pattern_data === 'string') {
+    try {
+      med.schedule_pattern_data = JSON.parse(med.schedule_pattern_data);
+    } catch (e) {}
+  }
+  if (typeof med.injection_site_data === 'string') {
+    try {
+      med.injection_site_data = JSON.parse(med.injection_site_data);
+    } catch (e) {}
+  }
+  return med;
+}
 
 const updateMedication = async (req, res) => {
   try {
@@ -19,15 +39,18 @@ const updateMedication = async (req, res) => {
       photo_url,
       quantity_remaining,
       low_stock_threshold,
+      reason_for_treatment,
+      schedule_pattern,
+      schedule_pattern_data,
+      injection_site_data,
     } = req.body;
 
     // Verify medication belongs to user
-    const existingMedication = await prisma.medication.findFirst({
-      where: {
-        id: id,
-        user_id: userId,
-      },
-    });
+    const existingRows = await query(
+      'SELECT * FROM medications WHERE id = ? AND user_id = ? LIMIT 1',
+      [id, userId]
+    );
+    const existingMedication = existingRows?.[0] || null;
 
     if (!existingMedication) {
       return res.status(404).json({
@@ -55,27 +78,54 @@ const updateMedication = async (req, res) => {
     }
 
     // Update medication
-    const updatedMedication = await prisma.medication.update({
-      where: {
-        id: id,
-      },
-      data: {
+    await query(
+      `UPDATE medications
+       SET name = ?,
+           dosage = ?,
+           medication_type = ?,
+           frequency = ?,
+           times_per_day = ?,
+           times_of_day = ?,
+           start_date = ?,
+           end_date = ?,
+           is_continuous = ?,
+           food_instructions = ?,
+           notes = ?,
+           photo_url = ?,
+           quantity_remaining = ?,
+           low_stock_threshold = ?,
+           reason_for_treatment = ?,
+           schedule_pattern = ?,
+           schedule_pattern_data = ?,
+           injection_site_data = ?,
+           updated_at = NOW()
+       WHERE id = ? AND user_id = ?`,
+      [
         name,
         dosage,
-        medication_type: medication_type || 'tablet',
-        frequency: derivedFrequency,
-        times_per_day: derivedTimesPerDay,
-        times_of_day: times_of_day,
-        start_date: new Date(start_date),
-        end_date: end_date ? new Date(end_date) : null,
-        is_continuous: is_continuous !== undefined ? is_continuous : true,
-        food_instructions: food_instructions || null,
-        notes: notes || null,
-        photo_url: photo_url || null,
-        quantity_remaining: quantity_remaining || null,
-        low_stock_threshold: low_stock_threshold || 7,
-      },
-    });
+        medication_type || 'tablet',
+        derivedFrequency,
+        derivedTimesPerDay,
+        JSON.stringify(times_of_day),
+        new Date(start_date),
+        end_date ? new Date(end_date) : null,
+        is_continuous !== undefined ? !!is_continuous : true,
+        food_instructions || null,
+        notes || null,
+        photo_url || null,
+        quantity_remaining ?? null,
+        low_stock_threshold ?? 7,
+        reason_for_treatment || null,
+        schedule_pattern || existingMedication.schedule_pattern || 'daily',
+        schedule_pattern_data ? JSON.stringify(schedule_pattern_data) : existingMedication.schedule_pattern_data,
+        injection_site_data ? JSON.stringify(injection_site_data) : existingMedication.injection_site_data,
+        id,
+        userId,
+      ]
+    );
+
+    const updatedRows = await query('SELECT * FROM medications WHERE id = ? LIMIT 1', [id]);
+    const updatedMedication = updatedRows?.[0] ? parseMedicationRow(updatedRows[0]) : null;
 
     res.json({
       success: true,

@@ -11,7 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
 import BASE_URL from '../context/Api';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getAuthToken } from '../utils/authToken';
 
 const CaregiverInvitationsScreen = ({ navigation }) => {
   const [receivedInvitations, setReceivedInvitations] = useState([]);
@@ -25,7 +25,7 @@ const CaregiverInvitationsScreen = ({ navigation }) => {
 
   const loadInvitations = async () => {
     try {
-      const token = await AsyncStorage.getItem('authToken');
+      const token = await getAuthToken();
       if (!token) {
         setLoading(false);
         return;
@@ -54,7 +54,7 @@ const CaregiverInvitationsScreen = ({ navigation }) => {
   const handleAccept = async (invitationId) => {
     setProcessing(invitationId);
     try {
-      const token = await AsyncStorage.getItem('authToken');
+      const token = await getAuthToken();
       const response = await axios.post(
         `${BASE_URL}/caregivers/accept/${invitationId}`,
         {},
@@ -89,7 +89,7 @@ const CaregiverInvitationsScreen = ({ navigation }) => {
           onPress: async () => {
             setProcessing(invitationId);
             try {
-              const token = await AsyncStorage.getItem('authToken');
+              const token = await getAuthToken();
               const response = await axios.post(
                 `${BASE_URL}/caregivers/reject/${invitationId}`,
                 {},
@@ -128,7 +128,7 @@ const CaregiverInvitationsScreen = ({ navigation }) => {
           onPress: async () => {
             setProcessing(relationshipId);
             try {
-              const token = await AsyncStorage.getItem('authToken');
+              const token = await getAuthToken();
               const response = await axios.delete(
                 `${BASE_URL}/caregivers/remove/${relationshipId}`,
                 {

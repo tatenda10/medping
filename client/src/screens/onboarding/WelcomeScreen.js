@@ -47,7 +47,14 @@ const WelcomeScreen = ({ navigation }) => {
           <TouchableOpacity
             className="py-4 items-center w-full rounded-2xl border-2"
             style={{ borderColor: '#90CDF4' }}
-            onPress={() => navigation.navigate('SignIn')}
+            onPress={() => {
+              const parentNav = navigation.getParent();
+              if (parentNav?.navigate) {
+                parentNav.navigate('Login');
+              } else {
+                navigation.navigate('SignIn');
+              }
+            }}
             activeOpacity={0.8}
           >
             <Text className="text-base font-semibold" style={{ color: '#90CDF4' }}>Login</Text>

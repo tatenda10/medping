@@ -1,29 +1,22 @@
-const prisma = require('../../config/database');
+const { query } = require('../../config/mysql');
 
 const listVitalsLogs = async (req, res) => {
   try {
     const userId = req.user.id;
     const { limit = 50, offset = 0 } = req.query;
+    const take = Math.max(0, parseInt(limit, 10) || 50);
+    const skip = Math.max(0, parseInt(offset, 10) || 0);
 
-    // Check if prisma is properly initialized
-    if (!prisma || !prisma.vitalsLog) {
-      console.error('Prisma client not properly initialized');
-      return res.status(500).json({
-        success: false,
-        message: 'Database connection error',
-      });
-    }
-
-    const vitals = await prisma.vitalsLog.findMany({
-      where: {
-        user_id: userId,
-      },
-      orderBy: {
-        recorded_at: 'desc',
-      },
-      take: parseInt(limit),
-      skip: parseInt(offset),
-    });
+    // Some MySQL setups do not like placeholders for LIMIT/OFFSET.
+    // Safely inline the numeric values and keep userId parameterized.
+    const vitals = await query(
+      `SELECT *
+       FROM vitals_logs
+       WHERE user_id = ?
+       ORDER BY recorded_at DESC
+       LIMIT ${take} OFFSET ${skip}`,
+      [userId]
+    );
 
     res.json({
       success: true,

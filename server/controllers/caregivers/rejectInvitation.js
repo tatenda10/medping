@@ -1,4 +1,4 @@
-const prisma = require('../../config/database');
+const { query } = require('../../config/mysql');
 
 const rejectInvitation = async (req, res) => {
   try {
@@ -6,9 +6,10 @@ const rejectInvitation = async (req, res) => {
     const userId = req.user.id;
 
     // Find the invitation where the current user is the care recipient
-    const relationship = await prisma.caregiverRelationship.findUnique({
-      where: { id: invitationId },
-    });
+    const rows = await query('SELECT * FROM caregiver_relationships WHERE id = ? LIMIT 1', [
+      invitationId,
+    ]);
+    const relationship = rows?.[0] || null;
 
     if (!relationship) {
       return res.status(404).json({
@@ -26,9 +27,10 @@ const rejectInvitation = async (req, res) => {
     }
 
     // Delete the relationship (rejecting removes it)
-    await prisma.caregiverRelationship.delete({
-      where: { id: invitationId },
-    });
+    await query('DELETE FROM caregiver_relationships WHERE id = ? AND care_recipient_id = ?', [
+      invitationId,
+      userId,
+    ]);
 
     res.json({
       success: true,

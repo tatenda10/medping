@@ -187,31 +187,25 @@ class BackgroundTaskService {
       console.log('⚠️ Background tasks not supported on web');
       return false;
     }
-
     try {
-      // Check if background fetch is available
-      const isAvailable = await BackgroundFetch.isAvailableAsync();
-      if (!isAvailable) {
-        console.warn('⚠️ Background fetch is not available on this device');
-        return false;
-      }
-
-      // Check current status
+      // Check current background fetch status instead of deprecated isAvailableAsync
       const status = await BackgroundFetch.getStatusAsync();
-      
-      if (status === BackgroundFetch.BackgroundFetchStatus.Restricted) {
-        console.warn('⚠️ Background fetch is restricted on this device');
-        return false;
-      }
-
-      if (status === BackgroundFetch.BackgroundFetchStatus.Denied) {
-        console.warn('⚠️ Background fetch permission denied');
+      const isAvailable = status === BackgroundFetch.BackgroundFetchStatus.Available;
+      if (!isAvailable) {
+        if (status === BackgroundFetch.BackgroundFetchStatus.Restricted) {
+          console.warn('⚠️ Background fetch is restricted on this device');
+        } else if (status === BackgroundFetch.BackgroundFetchStatus.Denied) {
+          console.warn('⚠️ Background fetch permission denied');
+        } else {
+          console.warn('⚠️ Background fetch is not available on this device');
+        }
         return false;
       }
 
       // Register the task
       await BackgroundFetch.registerTaskAsync(BACKGROUND_TASK_NAME, {
-        minimumInterval: 15, // Run at least every 15 minutes
+        // Expo expects seconds; 15 * 60 = 15 minutes
+        minimumInterval: 15 * 60,
         stopOnTerminate: false, // Continue running when app is terminated
         startOnBoot: true, // Start when device boots
       });

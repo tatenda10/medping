@@ -1,4 +1,4 @@
-const prisma = require('../../config/database');
+const { query } = require('../../config/mysql');
 
 const updateAppointment = async (req, res) => {
   try {
@@ -7,12 +7,11 @@ const updateAppointment = async (req, res) => {
     const updateData = req.body;
 
     // Verify appointment belongs to user
-    const appointment = await prisma.appointment.findFirst({
-      where: {
-        id,
-        user_id: userId,
-      },
-    });
+    const existingRows = await query(
+      'SELECT * FROM appointments WHERE id = ? AND user_id = ? LIMIT 1',
+      [id, userId]
+    );
+    const appointment = existingRows?.[0] || null;
 
     if (!appointment) {
       return res.status(404).json({
@@ -21,13 +20,48 @@ const updateAppointment = async (req, res) => {
       });
     }
 
-    const updated = await prisma.appointment.update({
-      where: { id },
-      data: {
-        ...updateData,
-        scheduled_time: updateData.scheduled_time ? new Date(updateData.scheduled_time) : undefined,
-      },
-    });
+    const fields = [];
+    const params = [];
+
+    const allowed = [
+      'title',
+      'doctor_name',
+      'appointment_type',
+      'scheduled_time',
+      'location',
+      'notes',
+      'reminder_minutes',
+    ];
+
+    for (const key of allowed) {
+      if (Object.prototype.hasOwnProperty.call(updateData, key)) {
+        fields.push(`${key} = ?`);
+        if (key === 'scheduled_time' && updateData.scheduled_time) {
+          params.push(new Date(updateData.scheduled_time));
+        } else {
+          params.push(updateData[key]);
+        }
+      }
+    }
+
+    if (fields.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No changes',
+        appointment,
+      });
+    }
+
+    fields.push('updated_at = NOW()');
+    params.push(id, userId);
+
+    await query(
+      `UPDATE appointments SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`,
+      params
+    );
+
+    const updatedRows = await query('SELECT * FROM appointments WHERE id = ? LIMIT 1', [id]);
+    const updated = updatedRows?.[0] || null;
 
     res.json({
       success: true,

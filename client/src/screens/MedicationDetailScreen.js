@@ -15,7 +15,7 @@ import { clerkAxios } from '../utils/clerkAxios';
 import { format, differenceInSeconds, addDays, startOfDay, isSameDay, parseISO, addHours } from 'date-fns';
 import databaseService from '../services/databaseService';
 import syncService from '../services/syncService';
-import { useAuth } from '../context/ClerkAuthContext';
+import { useAuth } from '../context/AuthContext';
 import { getMedicationIcon } from '../utils/medicationIcons';
 
 const MedicationDetailScreen = ({ route, navigation }) => {

@@ -13,6 +13,7 @@ import CreateAccountPrompt from '../components/CreateAccountPrompt';
 import { clerkAxios } from '../utils/clerkAxios';
 import syncService from '../services/syncService';
 import Svg, { Circle } from 'react-native-svg';
+import { getAuthToken } from '../utils/authToken';
 
 const MetricsScreen = ({ navigation: navProp }) => {
   const navigation = navProp || useNavigation();
@@ -261,7 +262,7 @@ const MetricsScreen = ({ navigation: navProp }) => {
     
     setDownloadingPDF(true);
     try {
-      const token = await AsyncStorage.getItem('authToken');
+      const token = await getAuthToken();
       if (!token) {
         Alert.alert('Error', 'Please log in to download reports');
         setDownloadingPDF(false);

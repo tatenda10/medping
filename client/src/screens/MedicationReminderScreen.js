@@ -12,7 +12,7 @@ import { Audio } from 'expo-av';
 import { clerkAxios } from '../utils/clerkAxios';
 import databaseService from '../services/databaseService';
 import syncService from '../services/syncService';
-import { useAuth } from '../context/ClerkAuthContext';
+import { useAuth } from '../context/AuthContext';
 
 // Simple ID generator for React Native
 const generateId = () => {

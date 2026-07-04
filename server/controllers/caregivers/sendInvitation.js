@@ -1,4 +1,4 @@
-const prisma = require('../../config/database');
+const { query } = require('../../config/mysql');
 
 const sendInvitation = async (req, res) => {
   try {
@@ -13,9 +13,11 @@ const sendInvitation = async (req, res) => {
     }
 
     // Find the user by email (the care recipient - person whose schedule will be shared)
-    const careRecipient = await prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
-    });
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const users = await query('SELECT id, name, email FROM users WHERE email = ? LIMIT 1', [
+      normalizedEmail,
+    ]);
+    const careRecipient = users?.[0] || null;
 
     if (!careRecipient) {
       return res.status(404).json({
@@ -32,12 +34,14 @@ const sendInvitation = async (req, res) => {
     }
 
     // Check if relationship already exists
-    const existingRelationship = await prisma.caregiverRelationship.findFirst({
-      where: {
-        caregiver_id: caregiverId,
-        care_recipient_id: careRecipient.id,
-      },
-    });
+    const existing = await query(
+      `SELECT id, status
+       FROM caregiver_relationships
+       WHERE caregiver_id = ? AND care_recipient_id = ?
+       LIMIT 1`,
+      [caregiverId, careRecipient.id]
+    );
+    const existingRelationship = existing?.[0] || null;
 
     if (existingRelationship) {
       return res.status(400).json({
@@ -49,45 +53,45 @@ const sendInvitation = async (req, res) => {
     }
 
     // Create the invitation (caregiver can view care recipient's schedule)
-    const relationship = await prisma.caregiverRelationship.create({
-      data: {
-        caregiver_id: caregiverId,
-        care_recipient_id: careRecipient.id,
-        status: 'pending',
-      },
-      include: {
-        care_recipient: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
-    });
+    const idRows = await query('SELECT UUID() as id');
+    const relationshipId = idRows?.[0]?.id;
+    await query(
+      `INSERT INTO caregiver_relationships (id, caregiver_id, care_recipient_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, 'pending', NOW(), NOW())`,
+      [relationshipId, caregiverId, careRecipient.id]
+    );
 
     // Create notification for the care recipient
-    await prisma.notification.create({
-      data: {
-        user_id: careRecipient.id,
-        type: 'caregiver_alert',
-        title: 'New Caregiver Invitation',
-        message: `${req.user.name || 'Someone'} wants to view your medication schedule`,
-        data: {
-          relationship_id: relationship.id,
+    const notifIdRows = await query('SELECT UUID() as id');
+    const notifId = notifIdRows?.[0]?.id;
+    await query(
+      `INSERT INTO notifications (id, user_id, type, title, message, data, is_read, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 0, NOW())`,
+      [
+        notifId,
+        careRecipient.id,
+        'caregiver_alert',
+        'New Caregiver Invitation',
+        `${req.user.name || 'Someone'} wants to view your medication schedule`,
+        JSON.stringify({
+          relationship_id: relationshipId,
           caregiver_id: caregiverId,
           caregiver_name: req.user.name,
-        },
-      },
-    });
+        }),
+      ]
+    );
 
     res.json({
       success: true,
       message: 'Invitation sent successfully',
       relationship: {
-        id: relationship.id,
-        status: relationship.status,
-        care_recipient: relationship.care_recipient,
+        id: relationshipId,
+        status: 'pending',
+        care_recipient: {
+          id: careRecipient.id,
+          name: careRecipient.name,
+          email: careRecipient.email,
+        },
       },
     });
   } catch (error) {

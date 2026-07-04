@@ -8,11 +8,12 @@ import { clerkAxios } from '../utils/clerkAxios';
 import { format, addDays, startOfWeek, eachDayOfInterval, differenceInSeconds } from 'date-fns';
 import databaseService from '../services/databaseService';
 import syncService from '../services/syncService';
-import { useAuth } from '../context/ClerkAuthContext';
+import { useAuth } from '../context/AuthContext';
 import CreateAccountPrompt from '../components/CreateAccountPrompt';
 
 const DashboardScreen = () => {
   const navigation = useNavigation();
+  const rootNavigation = navigation.getParent();
   const { isAuthenticated, userId, user } = useAuth();
   const [showCreateAccountPrompt, setShowCreateAccountPrompt] = useState(false);
   const [promptMessage, setPromptMessage] = useState('');
@@ -67,16 +68,27 @@ const DashboardScreen = () => {
 
   const loadUserData = async () => {
     try {
-      // Try to get user name from Clerk user object
+      // Prefer AuthContext user (JWT backend)
       if (user) {
-        setUserName(user.firstName || user.emailAddresses?.[0]?.emailAddress?.split('@')[0] || 'User');
-      } else {
-        // Fallback to AsyncStorage for guest mode
-        const userData = await AsyncStorage.getItem('userData');
-        if (userData) {
-          const parsedUser = JSON.parse(userData);
-          setUserName(parsedUser.name || parsedUser.email?.split('@')[0] || 'User');
-        }
+        setUserName(
+          user.name ||
+            (typeof user.email === 'string'
+              ? user.email.split('@')[0]
+              : 'User')
+        );
+        return;
+      }
+
+      // Fallback to AsyncStorage for guest / legacy data
+      const userData = await AsyncStorage.getItem('userData');
+      if (userData) {
+        const parsedUser = JSON.parse(userData);
+        setUserName(
+          parsedUser.name ||
+            (typeof parsedUser.email === 'string'
+              ? parsedUser.email.split('@')[0]
+              : 'User')
+        );
       }
     } catch (error) {
       console.error('Error loading user data:', error);
@@ -365,14 +377,14 @@ const DashboardScreen = () => {
   const handleLogDose = () => {
     if (!nextDose) return;
     requireAuth(
-      () => navigation.navigate('MedicationDetail', { medicationId: nextDose.medication.id }),
+      () => rootNavigation?.navigate('MedicationDetail', { medicationId: nextDose.medication.id }),
       'Create an account to log medication doses.'
     );
   };
 
   const handleLogVitals = () => {
     requireAuth(
-      () => navigation.navigate('VitalsTracking'),
+      () => rootNavigation?.navigate('VitalsTracking'),
       'Create an account to track your vitals.'
     );
   };
@@ -404,7 +416,17 @@ const DashboardScreen = () => {
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
         {/* Header with User Profile */}
         <View className="flex-row justify-between items-center px-5 pt-3 pb-4">
-          <View className="flex-row items-center flex-1">
+          <TouchableOpacity
+            className="flex-row items-center flex-1"
+            activeOpacity={0.7}
+            onPress={() => {
+              if (isAuthenticated) {
+                navigation.navigate('Settings', { screen: 'Profile' });
+              } else {
+                navigation.navigate('Settings');
+              }
+            }}
+          >
             <View className="mr-3">
               <MaterialIcons name="account-circle" size={48} color="#90CDF4" />
             </View>
@@ -412,12 +434,6 @@ const DashboardScreen = () => {
               <Text className="text-lg font-bold text-gray-800 mb-0.5">Hello, {userName}</Text>
               <Text className="text-sm text-gray-500">Stay on track today</Text>
             </View>
-          </View>
-          <TouchableOpacity 
-            className="p-2"
-            onPress={() => navigation.openDrawer()}
-          >
-            <MaterialIcons name="menu" size={32} color="#666" />
           </TouchableOpacity>
         </View>
 
@@ -497,7 +513,7 @@ const DashboardScreen = () => {
           <View className="flex-row flex-wrap justify-between">
             <TouchableOpacity 
               className="w-[48%] bg-white rounded-xl p-4 mb-3 items-center border border-gray-200"
-              onPress={() => requireAuth(() => navigation.navigate('VitalsTracking'), 'Create an account to track vitals.')}
+              onPress={() => requireAuth(() => rootNavigation?.navigate('VitalsTracking'), 'Create an account to track vitals.')}
             >
               <MaterialIcons name="favorite" size={32} color="#E53935" />
               <Text className="text-xs text-gray-600 mt-2 mb-1">Heart Rate</Text>
@@ -507,7 +523,7 @@ const DashboardScreen = () => {
             </TouchableOpacity>
             <TouchableOpacity 
               className="w-[48%] bg-white rounded-xl p-4 mb-3 items-center border border-gray-200"
-              onPress={() => requireAuth(() => navigation.navigate('VitalsTracking'), 'Create an account to track vitals.')}
+              onPress={() => requireAuth(() => rootNavigation?.navigate('VitalsTracking'), 'Create an account to track vitals.')}
             >
               <MaterialIcons name="healing" size={32} color="#90CDF4" />
               <Text className="text-xs text-gray-600 mt-2 mb-1">Blood Pressure</Text>
@@ -517,7 +533,7 @@ const DashboardScreen = () => {
             </TouchableOpacity>
             <TouchableOpacity 
               className="w-[48%] bg-white rounded-xl p-4 mb-3 items-center border border-gray-200"
-              onPress={() => requireAuth(() => navigation.navigate('VitalsTracking'), 'Create an account to track vitals.')}
+              onPress={() => requireAuth(() => rootNavigation?.navigate('VitalsTracking'), 'Create an account to track vitals.')}
             >
               <MaterialIcons name="scale" size={32} color="#FF9800" />
               <Text className="text-xs text-gray-600 mt-2 mb-1">Weight</Text>
@@ -582,7 +598,7 @@ const DashboardScreen = () => {
                     key={`${med.id}-${entry.time}-${index}`}
                     className="flex-row items-center bg-white rounded-xl p-4 border border-gray-200"
                     onPress={() => requireAuth(
-                      () => navigation.navigate('MedicationDetail', { medicationId: med.id }),
+                      () => rootNavigation?.navigate('MedicationDetail', { medicationId: med.id }),
                       'Create an account to view medication details.'
                     )}
                     activeOpacity={0.7}
@@ -605,7 +621,7 @@ const DashboardScreen = () => {
                       <TouchableOpacity 
                         className="p-1"
                         onPress={() => requireAuth(
-                          () => navigation.navigate('MedicationDetail', { medicationId: med.id }),
+                          () => rootNavigation?.navigate('MedicationDetail', { medicationId: med.id }),
                           'Create an account to log doses.'
                         )}
                       >

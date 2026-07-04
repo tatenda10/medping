@@ -10,6 +10,7 @@ import { format } from 'date-fns';
 import AppHeader from '../components/AppHeader';
 import databaseService from '../services/databaseService';
 import syncService from '../services/syncService';
+import { getAuthToken } from '../utils/authToken';
 
 const AddRefillScreen = ({ navigation, route }) => {
   const medicationId = route?.params?.medicationId;
@@ -77,7 +78,7 @@ const AddRefillScreen = ({ navigation, route }) => {
       const online = await syncService.isOnline();
       if (online) {
         try {
-          const token = await AsyncStorage.getItem('authToken');
+          const token = await getAuthToken();
           const response = await axios.post(`${BASE_URL}/refills`, refillData, {
             headers: {
               'Authorization': `Bearer ${token}`,

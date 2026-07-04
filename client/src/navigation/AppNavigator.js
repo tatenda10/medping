@@ -3,17 +3,18 @@ import { View, Text, Platform } from 'react-native';
 import { NavigationContainer, CommonActions } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { createDrawerNavigator } from '@react-navigation/drawer';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNotificationHandler } from '../hooks/useNotificationHandler';
 import { navigationRef } from './navigationRef';
+import { navigateAfterAuthentication, registerPostAuthReadyHandler } from './postAuthNavigation';
 import CreateAccountPrompt from '../components/CreateAccountPrompt';
-import { useAuth } from '../context/ClerkAuthContext';
-import { useAuth as useClerkAuth, useUser } from '@clerk/clerk-expo';
-import databaseService from '../services/databaseService';
-
+import SubscriptionPaywallGate from '../components/SubscriptionPaywallGate';
+import { useAuth } from '../context/AuthContext';
+import clearAllData from '../utils/clearAllData';
+import { logoutPurchasesUser } from '../services/purchasesService';
+import syncService from '../services/syncService';
 
 // Screens
 import SplashScreen from '../screens/SplashScreen';
@@ -24,6 +25,7 @@ import onboardingService from '../services/onboardingService';
 import DashboardScreen from '../screens/DashboardScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import SubscriptionScreen from '../screens/SubscriptionScreen';
 import CalendarScreen from '../screens/CalendarScreen';
 import MetricsScreen from '../screens/MetricsScreen';
 import AddMedicineScreen from '../screens/AddMedicineScreen';
@@ -39,13 +41,11 @@ import WaterIntakeScreen from '../screens/WaterIntakeScreen';
 import AppointmentsScreen from '../screens/AppointmentsScreen';
 
 // Components
-import DrawerContent from '../components/DrawerContent';
-import AppHeader from '../components/AppHeader';
 import CustomTabBar from '../components/CustomTabBar';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
-const Drawer = createDrawerNavigator();
+const SettingsStack = createNativeStackNavigator();
 
 // Component to handle notifications inside NavigationContainer
 const NotificationHandler = () => {
@@ -75,7 +75,12 @@ const MainTabs = ({ navigation, onLogout }) => {
   return (
     <View style={{ flex: 1 }}>
       <Tab.Navigator
-        tabBar={(props) => <CustomTabBar {...props} />}
+        tabBar={(props) => (
+          <CustomTabBar
+            {...props}
+            onBeforeAddMedicine={() => setShowCreateAccountPrompt(false)}
+          />
+        )}
         screenOptions={{
           headerShown: false,
         }}
@@ -151,29 +156,10 @@ const MainTabs = ({ navigation, onLogout }) => {
         <Tab.Screen
           name="Settings"
           options={{
-            tabBarButton: () => null, // Hide from default tab bar, handled by CustomTabBar
-          }}
-          listeners={{
-            tabPress: (e) => {
-              handleTabPress(
-                'Settings',
-                'Create an account to access settings and manage your account.',
-                () => e.preventDefault()
-              );
-            },
-            beforeRemove: (e) => {
-              if (!isAuthSync()) {
-                e.preventDefault();
-              }
-            },
+            tabBarButton: () => null,
           }}
         >
-          {({ navigation }) => {
-            if (!isAuthSync() && !isAuthenticated) {
-              return null;
-            }
-            return <SettingsScreen navigation={navigation} onLogout={onLogout} />;
-          }}
+          {() => <SettingsStackNavigator onLogout={onLogout} />}
         </Tab.Screen>
       </Tab.Navigator>
 
@@ -196,116 +182,103 @@ const DashboardScreenWithHeader = ({ navigation }) => {
   );
 };
 
-// Drawer Navigator
-const DrawerNavigator = ({ onLogout }) => {
+// Settings tab stack — keeps bottom nav visible on profile & caregiver screens
+const SettingsStackNavigator = ({ onLogout }) => {
   const authContext = useAuth();
   const authToken = authContext?.authToken || null;
+
   return (
-    <Drawer.Navigator
-      drawerContent={(props) => <DrawerContent {...props} onLogout={onLogout} />}
-      screenOptions={{
-        headerShown: false,
-        drawerType: 'front',
-        drawerStyle: {
-          width: '75%', // Make drawer about 3/4 of the screen width
-        },
-      }}
-    >
-      <Drawer.Screen name="MainTabs">
-        {(props) => <MainTabs {...props} onLogout={onLogout} userToken={authToken} />}
-      </Drawer.Screen>
-      <Drawer.Screen 
-        name="Profile"
-        options={{ drawerItemStyle: { display: 'none' } }}
-      >
+    <SettingsStack.Navigator screenOptions={{ headerShown: false }}>
+      <SettingsStack.Screen name="SettingsMain">
+        {(props) => <SettingsScreen {...props} onLogout={onLogout} />}
+      </SettingsStack.Screen>
+      <SettingsStack.Screen name="Profile">
         {(props) => <ProfileScreen {...props} userToken={authToken} onLogout={onLogout} />}
-      </Drawer.Screen>
-      <Drawer.Screen 
-        name="AddMedicine"
-        options={{ drawerItemStyle: { display: 'none' } }}
-      >
-        {({ navigation }) => <AddMedicineScreen navigation={navigation} />}
-      </Drawer.Screen>
-      <Drawer.Screen 
-        name="MedicationDetail"
-        options={{ drawerItemStyle: { display: 'none' } }}
-      >
-        {({ navigation, route }) => <MedicationDetailScreen navigation={navigation} route={route} />}
-      </Drawer.Screen>
-      <Drawer.Screen 
-        name="EditMedicine"
-        options={{ drawerItemStyle: { display: 'none' } }}
-      >
-        {({ navigation, route }) => <EditMedicineScreen navigation={navigation} route={route} />}
-      </Drawer.Screen>
-      <Drawer.Screen 
-        name="MedicationReminder"
-        options={{ 
-          drawerItemStyle: { display: 'none' },
-          headerShown: false,
-          gestureEnabled: false, // Prevent swipe back
-        }}
-      >
-        {({ navigation, route }) => <MedicationReminderScreen navigation={navigation} route={route} />}
-      </Drawer.Screen>
-      <Drawer.Screen 
-        name="InviteCaregiver"
-        options={{ drawerItemStyle: { display: 'none' } }}
-      >
-        {({ navigation }) => <InviteCaregiverScreen navigation={navigation} />}
-      </Drawer.Screen>
-      <Drawer.Screen 
-        name="CaregiverInvitations"
-        options={{ drawerItemStyle: { display: 'none' } }}
-      >
-        {({ navigation }) => <CaregiverInvitationsScreen navigation={navigation} />}
-      </Drawer.Screen>
-      <Drawer.Screen 
-        name="AddRefill"
-        options={{ drawerItemStyle: { display: 'none' } }}
-      >
-        {({ navigation, route }) => <AddRefillScreen navigation={navigation} route={route} />}
-      </Drawer.Screen>
-      <Drawer.Screen 
-        name="VitalsTracking"
-        options={{ drawerItemStyle: { display: 'none' } }}
-      >
-        {({ navigation }) => <VitalsTrackingScreen navigation={navigation} />}
-      </Drawer.Screen>
-      <Drawer.Screen 
-        name="ExerciseTracking"
-        options={{ drawerItemStyle: { display: 'none' } }}
-      >
-        {({ navigation }) => <ExerciseTrackingScreen navigation={navigation} />}
-      </Drawer.Screen>
-      <Drawer.Screen 
-        name="WaterIntake"
-        options={{ drawerItemStyle: { display: 'none' } }}
-      >
-        {({ navigation }) => <WaterIntakeScreen navigation={navigation} />}
-      </Drawer.Screen>
-      <Drawer.Screen 
-        name="Appointments"
-        options={{ drawerItemStyle: { display: 'none' } }}
-      >
-        {({ navigation }) => <AppointmentsScreen navigation={navigation} />}
-      </Drawer.Screen>
-    </Drawer.Navigator>
+      </SettingsStack.Screen>
+      <SettingsStack.Screen name="InviteCaregiver" component={InviteCaregiverScreen} />
+      <SettingsStack.Screen name="CaregiverInvitations" component={CaregiverInvitationsScreen} />
+    </SettingsStack.Navigator>
   );
 };
 
+// Main app stack (replaces drawer)
+const MainAppNavigator = ({ onLogout }) => {
+  const authContext = useAuth();
+  const authToken = authContext?.authToken || null;
+
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="MainTabs">
+        {(props) => (
+          <>
+            <SubscriptionPaywallGate stackNavigation={props.navigation} />
+            <MainTabs {...props} onLogout={onLogout} userToken={authToken} />
+          </>
+        )}
+      </Stack.Screen>
+      <Stack.Screen name="AddMedicine">
+        {({ navigation }) => <AddMedicineScreen navigation={navigation} />}
+      </Stack.Screen>
+      <Stack.Screen name="MedicationDetail">
+        {({ navigation, route }) => <MedicationDetailScreen navigation={navigation} route={route} />}
+      </Stack.Screen>
+      <Stack.Screen name="EditMedicine">
+        {({ navigation, route }) => <EditMedicineScreen navigation={navigation} route={route} />}
+      </Stack.Screen>
+      <Stack.Screen
+        name="MedicationReminder"
+        options={{ gestureEnabled: false }}
+      >
+        {({ navigation, route }) => <MedicationReminderScreen navigation={navigation} route={route} />}
+      </Stack.Screen>
+      <Stack.Screen name="AddRefill">
+        {({ navigation, route }) => <AddRefillScreen navigation={navigation} route={route} />}
+      </Stack.Screen>
+      <Stack.Screen name="VitalsTracking">
+        {({ navigation }) => <VitalsTrackingScreen navigation={navigation} />}
+      </Stack.Screen>
+      <Stack.Screen name="ExerciseTracking">
+        {({ navigation }) => <ExerciseTrackingScreen navigation={navigation} />}
+      </Stack.Screen>
+      <Stack.Screen name="WaterIntake">
+        {({ navigation }) => <WaterIntakeScreen navigation={navigation} />}
+      </Stack.Screen>
+      <Stack.Screen name="Appointments">
+        {({ navigation }) => <AppointmentsScreen navigation={navigation} />}
+      </Stack.Screen>
+      <Stack.Screen
+        name="Subscription"
+        options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
+      >
+        {(props) => <SubscriptionScreen {...props} onLogout={onLogout} />}
+      </Stack.Screen>
+    </Stack.Navigator>
+  );
+};
+
+// Legacy name kept for root stack screen registration
+const DrawerNavigator = MainAppNavigator;
+
 const AppNavigator = () => {
-  const { isAuthenticated, isLoaded, userId, user } = useAuth();
-  const { signOut, isSignedIn } = useClerkAuth();
+  const { isAuthenticated, isLoaded, userId, clearAuth } = useAuth();
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [navResetKey, setNavResetKey] = useState(0);
 
   useEffect(() => {
-    console.log('🔄 Auth state changed - isLoaded:', isLoaded, 'isAuthenticated:', isAuthenticated, 'userId:', userId, 'isSignedIn:', isSignedIn);
+    registerPostAuthReadyHandler(() => {
+      setNeedsOnboarding(false);
+      setIsLoading(false);
+    });
+
+    return () => registerPostAuthReadyHandler(null);
+  }, []);
+
+  useEffect(() => {
     if (isLoaded) {
       checkAuthStatus();
     }
-  }, [isLoaded, isAuthenticated, userId, isSignedIn]);
+  }, [isLoaded, isAuthenticated, userId]);
 
   // Separate effect to handle navigation when auth state changes and user is authenticated
   useEffect(() => {
@@ -315,36 +288,32 @@ const AppNavigator = () => {
       // Check if user has data - if so, they should go to MainApp regardless of onboarding flag
       const checkAndNavigate = async () => {
         const hasData = await onboardingService.hasAnyMedications(userId);
-        const shouldShowMainApp = !needsOnboarding || hasData;
+        const shouldShowMainApp = true;
         
         if (navigationRef.current?.isReady()) {
           // Wait a bit for state to settle
-          setTimeout(() => {
+          setTimeout(async () => {
             const currentRoute = navigationRef.current?.getCurrentRoute();
             console.log('📍 Current route:', currentRoute?.name);
-            
-            // If we're on Login, SignUp, Welcome, or Onboarding screens but user is authenticated with data, go to MainApp
-            if ((currentRoute?.name === 'Login' || currentRoute?.name === 'SignUp' || 
-                 currentRoute?.name === 'Welcome' || currentRoute?.name === 'Onboarding' ||
-                 currentRoute?.name === 'AddFirstMedication') && shouldShowMainApp) {
-              console.log('🔄 Navigating away from', currentRoute.name, 'to MainApp (user has data)');
-              navigationRef.current?.dispatch(
-                CommonActions.reset({
-                  index: 0,
-                  routes: [{ name: 'MainApp' }],
-                })
-              );
-            } else if (currentRoute?.name === 'Login' || currentRoute?.name === 'SignUp') {
-              // If on login/signup but should show onboarding
-              if (needsOnboarding && !hasData) {
-                console.log('📝 Navigating to Onboarding');
-                navigationRef.current?.dispatch(
-                  CommonActions.reset({
-                    index: 0,
-                    routes: [{ name: 'Onboarding' }],
-                  })
-                );
-              }
+
+            // Auth screens handle their own navigation (including post-onboarding paywall)
+            if (
+              currentRoute?.name === 'Login' ||
+              currentRoute?.name === 'SignUp' ||
+              currentRoute?.name === 'SignIn' ||
+              currentRoute?.name === 'CreateAccount'
+            ) {
+              return;
+            }
+
+            if (
+              (currentRoute?.name === 'Welcome' ||
+                currentRoute?.name === 'Onboarding' ||
+                currentRoute?.name === 'AddFirstMedication') &&
+              shouldShowMainApp
+            ) {
+              console.log('🔄 Navigating away from', currentRoute.name, 'after auth');
+              await navigateAfterAuthentication();
             } else if (currentRoute?.name === 'Splash') {
               // If on splash screen and authenticated, navigate appropriately
               console.log('🔄 Navigating from Splash to appropriate screen');
@@ -381,7 +350,7 @@ const AppNavigator = () => {
             navigationRef.current.dispatch(
               CommonActions.reset({
                 index: 0,
-                routes: [{ name: 'Onboarding' }],
+                routes: [{ name: 'Splash' }],
               })
             );
           } catch (error) {
@@ -397,7 +366,7 @@ const AppNavigator = () => {
       console.log('🔍 checkAuthStatus called - isLoaded:', isLoaded, 'isAuthenticated:', isAuthenticated, 'userId:', userId);
       
       if (!isLoaded) {
-        console.log('⏳ Waiting for Clerk to load...');
+        console.log('⏳ Waiting for auth to load...');
         return; // Wait for Clerk to load
       }
 
@@ -408,13 +377,19 @@ const AppNavigator = () => {
       // Check if there's any data (medications) - for guest users or if onboarding not completed
       const hasData = await onboardingService.hasAnyMedications(userId || null);
       console.log('💊 Has medications data:', hasData, 'for userId:', userId);
-      
+
+      const shouldDeferNavigation =
+        navigationRef.current?.getCurrentRoute()?.name === 'Subscription';
+
       // If user is authenticated AND has data, always show MainApp (skip onboarding)
       // Even if onboarding flag is not set, if they have medications, they've already set up the app
       if (isAuthenticated && userId && hasData) {
         console.log('✅ User authenticated with data - showing MainApp (skipping onboarding)');
         setNeedsOnboarding(false);
         setIsLoading(false);
+        if (shouldDeferNavigation) {
+          return;
+        }
         // Ensure we navigate to MainApp
         setTimeout(() => {
           if (navigationRef.current?.isReady()) {
@@ -437,6 +412,9 @@ const AppNavigator = () => {
         console.log('✅ User authenticated with completed onboarding - showing MainApp');
         setNeedsOnboarding(false);
         setIsLoading(false);
+        if (shouldDeferNavigation) {
+          return;
+        }
         // Ensure we navigate to MainApp
         setTimeout(() => {
           if (navigationRef.current?.isReady()) {
@@ -461,8 +439,32 @@ const AppNavigator = () => {
         setIsLoading(false);
         return;
       }
+
+      // Authenticated users should never be sent back to the guest Welcome flow
+      if (isAuthenticated && userId) {
+        console.log('✅ User authenticated - showing MainApp');
+        setNeedsOnboarding(false);
+        setIsLoading(false);
+        if (shouldDeferNavigation) {
+          return;
+        }
+        setTimeout(() => {
+          if (navigationRef.current?.isReady()) {
+            const currentRoute = navigationRef.current?.getCurrentRoute();
+            if (currentRoute?.name !== 'MainApp') {
+              navigationRef.current.dispatch(
+                CommonActions.reset({
+                  index: 0,
+                  routes: [{ name: 'MainApp' }],
+                })
+              );
+            }
+          }
+        }, 100);
+        return;
+      }
       
-      // If no data exists AND onboarding not completed, show onboarding
+      // If no data exists AND onboarding not completed, show onboarding (guest only)
       if (!hasData && !completed) {
         console.log('📝 No data and onboarding not completed - showing onboarding');
         setNeedsOnboarding(true);
@@ -499,57 +501,21 @@ const AppNavigator = () => {
 
   const handleLoginSuccess = async () => {
     console.log('🟢 handleLoginSuccess called');
-    console.log('🟢 Current auth state - isAuthenticated:', isAuthenticated, 'userId:', userId);
-    
-    // Wait for Clerk to fully update state
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Force a re-check of auth status
-    // The useEffect will also trigger when isAuthenticated/userId changes
-    // but we force a check here to ensure immediate update
-    await checkAuthStatus();
-    
-    // If user is authenticated and we have userId, ensure we're not showing onboarding
-    // unless they truly need it (no data and onboarding not completed)
-    if (isAuthenticated && userId) {
-      const hasData = await onboardingService.hasAnyMedications(userId);
-      const completed = await onboardingService.hasCompletedOnboarding();
-      
-      if (hasData || completed) {
-        setNeedsOnboarding(false);
-        setIsLoading(false);
-        
-        // Force navigation to MainApp
-        if (navigationRef.current?.isReady()) {
-          navigationRef.current?.dispatch(
-            CommonActions.reset({
-              index: 0,
-              routes: [{ name: 'MainApp' }],
-            })
-          );
-        }
-      }
-    }
+
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    setNeedsOnboarding(false);
+    setIsLoading(false);
+
+    await navigateAfterAuthentication();
   };
 
   const handleSignUpSuccess = async () => {
-    // Wait a bit for Clerk to update state
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    // Onboarding is completed after signup (migration happens in SignUpScreen)
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
     setNeedsOnboarding(false);
-    
-    // Reset navigation to MainApp
-    if (navigationRef.current?.isReady()) {
-      setTimeout(() => {
-        navigationRef.current?.dispatch(
-          CommonActions.reset({
-            index: 0,
-            routes: [{ name: 'MainApp' }],
-          })
-        );
-      }, 100);
-    }
+    setIsLoading(false);
+
+    await navigateAfterAuthentication();
   };
 
   const handleOnboardingComplete = () => {
@@ -559,75 +525,42 @@ const AppNavigator = () => {
   const handleLogout = async () => {
     console.log('🔴 AppNavigator handleLogout called');
     try {
-      // Sign out from Clerk first
-      console.log('🔴 Signing out from Clerk...');
-      await signOut();
-      console.log('✅ Signed out from Clerk');
-      
-      // Clear all guest data from database
-      console.log('🔴 Clearing guest data from database...');
-      try {
-        await databaseService.ensureInitialized();
-        if (databaseService.db) {
-          // Get guest record IDs before deletion (for sync_queue cleanup)
-          const guestMedications = await databaseService.db.getAllAsync('SELECT id FROM medications WHERE user_id = ?', ['guest']);
-          const guestDoseLogs = await databaseService.db.getAllAsync('SELECT id FROM dose_logs WHERE user_id = ?', ['guest']);
-          const guestAppointments = await databaseService.db.getAllAsync('SELECT id FROM appointments WHERE user_id = ?', ['guest']);
-          
-          // Delete all guest data
-          await databaseService.db.runAsync('DELETE FROM medications WHERE user_id = ?', ['guest']);
-          await databaseService.db.runAsync('DELETE FROM dose_logs WHERE user_id = ?', ['guest']);
-          await databaseService.db.runAsync('DELETE FROM refills WHERE user_id = ?', ['guest']);
-          await databaseService.db.runAsync('DELETE FROM vitals_logs WHERE user_id = ?', ['guest']);
-          await databaseService.db.runAsync('DELETE FROM health_logs WHERE user_id = ?', ['guest']);
-          await databaseService.db.runAsync('DELETE FROM appointments WHERE user_id = ?', ['guest']);
-          await databaseService.db.runAsync('DELETE FROM questionnaire_answers WHERE user_id = ?', ['guest']);
-          
-          // Clean up sync_queue items for guest records (they won't sync anyway)
-          for (const med of guestMedications) {
-            await databaseService.db.runAsync(
-              'DELETE FROM sync_queue WHERE table_name = ? AND record_id = ?',
-              ['medications', med.id]
-            );
-          }
-          for (const log of guestDoseLogs) {
-            await databaseService.db.runAsync(
-              'DELETE FROM sync_queue WHERE table_name = ? AND record_id = ?',
-              ['dose_logs', log.id]
-            );
-          }
-          for (const appt of guestAppointments) {
-            await databaseService.db.runAsync(
-              'DELETE FROM sync_queue WHERE table_name = ? AND record_id = ?',
-              ['appointments', appt.id]
-            );
-          }
-          
-          console.log('✅ Guest data cleared from database');
-        }
-      } catch (dbError) {
-        console.warn('⚠️ Error clearing guest data from database:', dbError);
-        // Continue anyway
-      }
-      
-      // Clear onboarding flags and questionnaire
-      console.log('🔴 Clearing onboarding data...');
-      await AsyncStorage.multiRemove([
-        'onboarding_completed',
-        'onboarding_questionnaire',
-      ]);
-      console.log('✅ Onboarding data cleared');
-      
-      // Don't manually set needsOnboarding - let checkAuthStatus determine it
-      // After logout, user is not authenticated, so checkAuthStatus will show onboarding
+      syncService.stopAutoSync();
+
+      // Switch to onboarding stack immediately so auth state changes cannot keep MainApp mounted
+      setNeedsOnboarding(true);
       setIsLoading(false);
-      
-      // Wait for Clerk state to update, then checkAuthStatus will determine navigation
+      setNavResetKey((key) => key + 1);
+
+      console.log('🔴 Clearing all local data...');
+      await clearAllData(false);
+      console.log('✅ Local data cleared');
+
+      try {
+        await logoutPurchasesUser();
+      } catch (purchaseError) {
+        console.warn('RevenueCat logout skipped:', purchaseError?.message);
+      }
+
+      console.log('🔴 Clearing auth...');
+      await clearAuth();
+      console.log('✅ Auth cleared');
+
       setTimeout(() => {
-        checkAuthStatus();
-      }, 300);
+        if (navigationRef.current?.isReady()) {
+          navigationRef.current.dispatch(
+            CommonActions.reset({
+              index: 0,
+              routes: [{ name: 'Splash' }],
+            })
+          );
+        }
+        syncService.startAutoSync();
+      }, 150);
     } catch (error) {
       console.error('❌ Error logging out:', error);
+      setNeedsOnboarding(true);
+      setNavResetKey((key) => key + 1);
     }
   };
 
@@ -639,6 +572,8 @@ const AppNavigator = () => {
     <NavigationContainer ref={navigationRef}>
       <NotificationHandler />
       <Stack.Navigator
+        key={needsOnboarding ? `onboarding-${navResetKey}` : `app-${navResetKey}`}
+        initialRouteName={needsOnboarding ? 'Splash' : 'MainApp'}
         screenOptions={{
           headerShown: false,
           animation: 'slide_from_right', // Smooth slide transition between screens
@@ -657,6 +592,10 @@ const AppNavigator = () => {
             </Stack.Screen>
             <Stack.Screen name="SignUp">
               {(props) => <SignUpScreen {...props} onSignUpSuccess={handleSignUpSuccess} />}
+            </Stack.Screen>
+            {/* Ensure MainApp route exists even during onboarding so RESET to MainApp works */}
+            <Stack.Screen name="MainApp" options={{ headerShown: false }}>
+              {() => <DrawerNavigator onLogout={handleLogout} />}
             </Stack.Screen>
           </>
         ) : (

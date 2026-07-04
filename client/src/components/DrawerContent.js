@@ -3,12 +3,12 @@ import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import axios from 'axios';
 import BASE_URL from '../context/Api';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
-import { useAuth } from '../context/ClerkAuthContext';
+import { useAuth } from '../context/AuthContext';
+import { getAuthToken } from '../utils/authToken';
 
 const DrawerContent = ({ navigation, onLogout }) => {
-  const { isAuthenticated, isSignedIn, getToken } = useAuth();
+  const { isAuthenticated, authToken } = useAuth();
   const [pendingInvitations, setPendingInvitations] = useState([]);
   const [loadingInvitations, setLoadingInvitations] = useState(true);
 
@@ -23,7 +23,7 @@ const DrawerContent = ({ navigation, onLogout }) => {
 
   const loadInvitations = async () => {
     try {
-      const token = await getToken();
+      const token = authToken || (await getAuthToken());
       if (!token) {
         setLoadingInvitations(false);
         return;
@@ -211,7 +211,7 @@ const DrawerContent = ({ navigation, onLogout }) => {
       </View>
 
       {/* Only show logout button if user is authenticated */}
-      {isAuthenticated && isSignedIn && (
+      {isAuthenticated && (
         <View style={styles.footer}>
           <TouchableOpacity
             style={styles.logoutItem}
@@ -372,4 +372,3 @@ const styles = StyleSheet.create({
 });
 
 export default DrawerContent;
-

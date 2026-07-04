@@ -23,7 +23,7 @@ import databaseService from '../services/databaseService';
 import syncService from '../services/syncService';
 import { MEDICATION_TYPES, getMedicationIcon } from '../utils/medicationIcons';
 import { format, addDays, eachDayOfInterval, startOfDay } from 'date-fns';
-import { useAuth } from '../context/ClerkAuthContext';
+import { useAuth } from '../context/AuthContext';
 // Simple ID generator for React Native
 const generateId = () => {
   return `med_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;

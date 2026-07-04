@@ -10,6 +10,8 @@ import {
   Switch,
   KeyboardAvoidingView,
   Keyboard,
+  Modal,
+  StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -21,10 +23,65 @@ import firebaseService from '../../services/firebaseService';
 import onboardingService from '../../services/onboardingService';
 import { navigationRef } from '../../navigation/navigationRef';
 
+const SKY_BLUE = '#90CDF4';
+
+const formStyles = StyleSheet.create({
+  fieldGroup: {
+    marginBottom: 22,
+  },
+  label: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#1F2937',
+    marginBottom: 8,
+  },
+  required: {
+    color: '#EF4444',
+  },
+  input: {
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 17,
+    color: '#111827',
+  },
+  inputFocused: {
+    borderColor: SKY_BLUE,
+    backgroundColor: '#F8FCFF',
+  },
+  inputMultiline: {
+    minHeight: 96,
+    textAlignVertical: 'top',
+  },
+  pickerButton: {
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  pickerText: {
+    fontSize: 17,
+    color: '#111827',
+  },
+});
+
+const FormLabel = ({ children, required }) => (
+  <Text style={formStyles.label}>
+    {children}
+    {required ? <Text style={formStyles.required}> *</Text> : null}
+  </Text>
+);
+
 const AddFirstMedicationScreen = ({ navigation }) => {
   const scrollViewRef = useRef(null);
-  const quantityRemainingYRef = useRef(0);
-  const lowStockYRef = useRef(0);
+  const fieldPositions = useRef({});
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [focusedField, setFocusedField] = useState(null);
   
   const [name, setName] = useState('');
   const [dosage, setDosage] = useState('');
@@ -52,13 +109,55 @@ const AddFirstMedicationScreen = ({ navigation }) => {
   const [timePickerIndex, setTimePickerIndex] = useState(null);
   const [tempTime, setTempTime] = useState(new Date());
   const [canContinue, setCanContinue] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [savedMedicationName, setSavedMedicationName] = useState('');
 
-  // Helper function to scroll to a position
-  const scrollToPosition = (y) => {
-    if (scrollViewRef.current) {
-      scrollViewRef.current.scrollTo({ y, animated: true });
-    }
+  const onFieldLayout = (key, event) => {
+    fieldPositions.current[key] = event.nativeEvent.layout.y;
   };
+
+  const scrollToField = (key) => {
+    setTimeout(() => {
+      const y = fieldPositions.current[key];
+      if (y !== undefined && scrollViewRef.current) {
+        const offset = keyboardHeight > 0 ? 120 : 24;
+        scrollViewRef.current.scrollTo({
+          y: Math.max(0, y - offset),
+          animated: true,
+        });
+      }
+    }, Platform.OS === 'ios' ? 100 : 80);
+  };
+
+  const getInputStyle = (key, extra = {}) => [
+    formStyles.input,
+    extra,
+    focusedField === key && formStyles.inputFocused,
+  ];
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+      setFocusedField(null);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (keyboardHeight > 0 && focusedField) {
+      scrollToField(focusedField);
+    }
+  }, [keyboardHeight, focusedField]);
 
   useEffect(() => {
     checkExistingMedications();
@@ -74,6 +173,38 @@ const AddFirstMedicationScreen = ({ navigation }) => {
     );
   }, [name, dosage, timesOfDay]);
 
+  const goToCreateAccount = async () => {
+    try {
+      setShowSuccessModal(false);
+      await onboardingService.completeOnboarding();
+      navigation.navigate('CreateAccount');
+    } catch (error) {
+      console.error('Error navigating to create account:', error);
+    }
+  };
+
+  const goToDashboard = async () => {
+    try {
+      setShowSuccessModal(false);
+      await onboardingService.completeOnboarding();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      if (navigationRef.current?.isReady()) {
+        navigationRef.current.dispatch(
+          CommonActions.reset({
+            index: 0,
+            routes: [{ name: 'MainApp' }],
+          })
+        );
+      } else {
+        navigation.getParent()?.navigate('MainApp');
+      }
+    } catch (error) {
+      console.error('Error navigating to dashboard:', error);
+      navigation.getParent()?.goBack();
+    }
+  };
+
   const checkExistingMedications = async () => {
     try {
       await databaseService.ensureInitialized();
@@ -85,8 +216,8 @@ const AddFirstMedicationScreen = ({ navigation }) => {
           [
             { text: 'Add Another', style: 'default' },
             {
-              text: 'Continue',
-              onPress: () => navigation.navigate('CreateAccount'),
+              text: 'Create Account',
+              onPress: goToCreateAccount,
             },
           ]
         );
@@ -238,68 +369,8 @@ const AddFirstMedicationScreen = ({ navigation }) => {
       // Track first medication added
       firebaseService.firstMedicationAdded(medicationType);
 
-      Alert.alert(
-        'Medication Added! 🎉',
-        'Start exploring the app! You can create an account later from Settings to sync your data.',
-        [
-          {
-            text: 'Add Another',
-            onPress: () => {
-              // Reset form
-              setName('');
-              setDosage('');
-              setMedicationType('tablet');
-              setTimesOfDay([]);
-              setStartDate(new Date());
-              setEndDate(null);
-              setIsContinuous(true);
-              setFoodInstructions('');
-              setNotes('');
-              setReasonForTreatment('');
-              setQuantityRemaining('');
-              setLowStockThreshold('7');
-              setSchedulePattern('daily');
-              setSelectedDays([]);
-              setAlternatingType('left_right');
-              setAlternatingCurrent('left');
-              setAlternatingDaysOn('3');
-              setAlternatingDaysOff('1');
-            },
-          },
-          {
-            text: 'Go to Dashboard',
-            style: 'default',
-            onPress: async () => {
-              try {
-                // Mark onboarding as complete
-                await onboardingService.completeOnboarding();
-                // Wait a moment for AsyncStorage to update
-                await new Promise(resolve => setTimeout(resolve, 100));
-                
-                // Use navigationRef to reset to MainApp at the root level
-                if (navigationRef.current?.isReady()) {
-                  navigationRef.current.dispatch(
-                    CommonActions.reset({
-                      index: 0,
-                      routes: [{ name: 'MainApp' }],
-                    })
-                  );
-                } else {
-                  const parent = navigation.getParent();
-                  if (parent) {
-                    parent.navigate('MainApp');
-                  } else {
-                    navigation.goBack();
-                  }
-                }
-              } catch (error) {
-                console.error('Error navigating to dashboard:', error);
-                navigation.getParent()?.goBack();
-              }
-            },
-          },
-        ]
-      );
+      setSavedMedicationName(name.trim());
+      setShowSuccessModal(true);
     } catch (error) {
       console.error('Error saving medication:', error);
       Alert.alert('Error', 'Failed to save medication. Please try again.');
@@ -307,61 +378,71 @@ const AddFirstMedicationScreen = ({ navigation }) => {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
-      {/* Header */}
-      <View className="px-6 py-6 flex-row justify-between items-center border-b border-gray-200">
-        <Text className="text-lg font-bold text-gray-900 flex-1">Add Medication</Text>
-        <TouchableOpacity onPress={handleSkip} className="px-4 py-2">
-          <Text className="text-base font-semibold" style={{ color: '#90CDF4' }}>Skip</Text>
+    <SafeAreaView style={styles.screen}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Add Medication</Text>
+        <TouchableOpacity onPress={handleSkip} style={styles.skipButton}>
+          <Text style={styles.skipText}>Skip</Text>
         </TouchableOpacity>
       </View>
 
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        className="flex-1"
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.flex}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
       >
-        <ScrollView 
+        <ScrollView
           ref={scrollViewRef}
-          className="flex-1" 
+          style={styles.flex}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingBottom: 120 }}
-          nestedScrollEnabled={true}
+          keyboardDismissMode="on-drag"
+          contentContainerStyle={{ paddingBottom: keyboardHeight + 140 }}
+          nestedScrollEnabled
         >
-          <View className="p-6">
-            {/* Medication Name */}
-            <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">
-                Medication Name <Text className="text-danger">*</Text>
-              </Text>
+          <View style={styles.formContent}>
+            <View
+              style={formStyles.fieldGroup}
+              onLayout={(event) => onFieldLayout('name', event)}
+            >
+              <FormLabel required>Medication Name</FormLabel>
               <TextInput
-                className="rounded-lg p-3 text-base bg-gray-50"
+                style={getInputStyle('name')}
                 placeholder="e.g., Aspirin"
+                placeholderTextColor="#9CA3AF"
                 value={name}
                 onChangeText={setName}
                 autoCapitalize="words"
+                onFocus={() => {
+                  setFocusedField('name');
+                  scrollToField('name');
+                }}
+                onBlur={() => setFocusedField(null)}
               />
             </View>
 
-            {/* Dosage */}
-            <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">
-                Dosage <Text className="text-danger">*</Text>
-              </Text>
+            <View
+              style={formStyles.fieldGroup}
+              onLayout={(event) => onFieldLayout('dosage', event)}
+            >
+              <FormLabel required>Dosage</FormLabel>
               <TextInput
-                className="rounded-lg p-3 text-base bg-gray-50"
+                style={getInputStyle('dosage')}
                 placeholder="e.g., 100mg, 1 tablet"
+                placeholderTextColor="#9CA3AF"
                 value={dosage}
                 onChangeText={setDosage}
+                onFocus={() => {
+                  setFocusedField('dosage');
+                  scrollToField('dosage');
+                }}
+                onBlur={() => setFocusedField(null)}
               />
             </View>
 
             {/* Medication Type */}
-            <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">
-                Medication Type <Text className="text-danger">*</Text>
-              </Text>
+            <View style={formStyles.fieldGroup}>
+              <FormLabel required>Medication Type</FormLabel>
               <View className="flex-row flex-wrap justify-between gap-2">
                 {MEDICATION_TYPES.map((type) => (
                   <TouchableOpacity
@@ -400,10 +481,10 @@ const AddFirstMedicationScreen = ({ navigation }) => {
             </View>
 
             {/* Times of Day */}
-            <View className="mb-6">
+            <View style={formStyles.fieldGroup}>
               <View className="flex-row justify-between items-center mb-2">
-                <Text className="text-base font-semibold text-gray-800">
-                  Times of Day <Text className="text-danger">*</Text>
+                <Text style={formStyles.label}>
+                  Times of Day<Text style={formStyles.required}> *</Text>
                 </Text>
                 <TouchableOpacity
                   onPress={handleAddTime}
@@ -421,12 +502,10 @@ const AddFirstMedicationScreen = ({ navigation }) => {
               {timesOfDay.map((time, index) => (
                 <View key={index} className="flex-row items-center mb-3 gap-3">
                   <TouchableOpacity
-                    className="flex-1 rounded-lg p-3 bg-gray-50"
+                    style={formStyles.pickerButton}
                     onPress={() => openTimePicker(index)}
                   >
-                    <Text className="text-base text-gray-800">
-                      {formatTime(time)}
-                    </Text>
+                    <Text style={formStyles.pickerText}>{formatTime(time)}</Text>
                   </TouchableOpacity>
                   {showTimePicker && timePickerIndex === index && (
                     <DateTimePicker
@@ -447,8 +526,8 @@ const AddFirstMedicationScreen = ({ navigation }) => {
             </View>
 
             {/* Schedule Pattern */}
-            <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">Schedule Pattern</Text>
+            <View style={formStyles.fieldGroup}>
+              <FormLabel>Schedule Pattern</FormLabel>
               <View className="flex-row gap-2.5 mt-2">
                 <TouchableOpacity
                   className={`flex-1 py-3 px-4 rounded-lg border-2 items-center ${
@@ -669,27 +748,42 @@ const AddFirstMedicationScreen = ({ navigation }) => {
                   )}
                   
                   {alternatingType === 'day_cycle' && (
-                    <View className="mt-4">
+                    <View
+                      className="mt-4"
+                      onLayout={(event) => onFieldLayout('alternatingDaysOn', event)}
+                    >
                       <Text className="text-sm font-semibold text-gray-800 mb-2">Days On / Days Off:</Text>
                       <View className="flex-row gap-3 mt-2">
                         <View className="flex-1">
-                          <Text className="text-xs text-gray-600 mb-1">Take for (days):</Text>
+                          <Text style={[formStyles.label, { fontSize: 15, marginBottom: 6 }]}>Take for (days)</Text>
                           <TextInput
-                            className="rounded-lg p-2 text-base bg-gray-50 text-center"
+                            style={getInputStyle('alternatingDaysOn', { textAlign: 'center' })}
                             value={alternatingDaysOn}
                             onChangeText={setAlternatingDaysOn}
                             keyboardType="number-pad"
                             placeholder="3"
+                            placeholderTextColor="#9CA3AF"
+                            onFocus={() => {
+                              setFocusedField('alternatingDaysOn');
+                              scrollToField('alternatingDaysOn');
+                            }}
+                            onBlur={() => setFocusedField(null)}
                           />
                         </View>
                         <View className="flex-1">
-                          <Text className="text-xs text-gray-600 mb-1">Skip for (days):</Text>
+                          <Text style={[formStyles.label, { fontSize: 15, marginBottom: 6 }]}>Skip for (days)</Text>
                           <TextInput
-                            className="rounded-lg p-2 text-base bg-gray-50 text-center"
+                            style={getInputStyle('alternatingDaysOff', { textAlign: 'center' })}
                             value={alternatingDaysOff}
                             onChangeText={setAlternatingDaysOff}
                             keyboardType="number-pad"
                             placeholder="1"
+                            placeholderTextColor="#9CA3AF"
+                            onFocus={() => {
+                              setFocusedField('alternatingDaysOff');
+                              scrollToField('alternatingDaysOff');
+                            }}
+                            onBlur={() => setFocusedField(null)}
                           />
                         </View>
                       </View>
@@ -749,17 +843,13 @@ const AddFirstMedicationScreen = ({ navigation }) => {
             </View>
 
             {/* Start Date */}
-            <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">
-                Start Date <Text className="text-danger">*</Text>
-              </Text>
+            <View style={formStyles.fieldGroup}>
+              <FormLabel required>Start Date</FormLabel>
               <TouchableOpacity
-                className="rounded-lg p-3 bg-gray-50"
+                style={formStyles.pickerButton}
                 onPress={() => setShowStartDatePicker(true)}
               >
-                <Text className="text-base text-gray-800">
-                  {startDate.toLocaleDateString()}
-                </Text>
+                <Text style={formStyles.pickerText}>{startDate.toLocaleDateString()}</Text>
               </TouchableOpacity>
               {showStartDatePicker && (
                 <DateTimePicker
@@ -777,11 +867,11 @@ const AddFirstMedicationScreen = ({ navigation }) => {
             </View>
 
             {/* End Date / Continuous */}
-            <View className="mb-6">
+            <View style={formStyles.fieldGroup}>
               <View className="flex-row justify-between items-center">
                 <View className="flex-1">
-                  <Text className="text-base font-semibold text-gray-800">Continuous Medication</Text>
-                  <Text className="text-xs text-gray-600 mt-1">
+                  <FormLabel>Continuous Medication</FormLabel>
+                  <Text style={{ fontSize: 15, color: '#6B7280', marginTop: 4 }}>
                     {isContinuous ? 'No end date' : 'Has end date'}
                   </Text>
                 </View>
@@ -794,15 +884,13 @@ const AddFirstMedicationScreen = ({ navigation }) => {
               </View>
               {!isContinuous && (
                 <View className="mt-4">
-                  <Text className="text-base font-semibold text-gray-800 mb-2">End Date</Text>
+                  <FormLabel>End Date</FormLabel>
                   <TouchableOpacity
-                    className="rounded-lg p-3 bg-gray-50"
+                    style={formStyles.pickerButton}
                     onPress={() => setShowEndDatePicker(true)}
                   >
-                    <Text className="text-base text-gray-800">
-                      {endDate
-                        ? endDate.toLocaleDateString()
-                        : 'Select end date'}
+                    <Text style={formStyles.pickerText}>
+                      {endDate ? endDate.toLocaleDateString() : 'Select end date'}
                     </Text>
                   </TouchableOpacity>
                   {showEndDatePicker && (
@@ -822,119 +910,299 @@ const AddFirstMedicationScreen = ({ navigation }) => {
               )}
             </View>
 
-            {/* Food Instructions */}
-            <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">Food Instructions</Text>
+            <View
+              style={formStyles.fieldGroup}
+              onLayout={(event) => onFieldLayout('foodInstructions', event)}
+            >
+              <FormLabel>Food Instructions</FormLabel>
               <TextInput
-                className="rounded-lg p-3 text-base bg-gray-50 h-20"
-                style={{ textAlignVertical: 'top' }}
+                style={[...getInputStyle('foodInstructions'), formStyles.inputMultiline]}
                 placeholder="e.g., Take with food, Take on empty stomach"
+                placeholderTextColor="#9CA3AF"
                 value={foodInstructions}
                 onChangeText={setFoodInstructions}
                 multiline
                 numberOfLines={3}
+                onFocus={() => {
+                  setFocusedField('foodInstructions');
+                  scrollToField('foodInstructions');
+                }}
+                onBlur={() => setFocusedField(null)}
               />
             </View>
 
-            {/* Reason for Treatment */}
-            <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">Reason for Treatment</Text>
+            <View
+              style={formStyles.fieldGroup}
+              onLayout={(event) => onFieldLayout('reasonForTreatment', event)}
+            >
+              <FormLabel>Reason for Treatment</FormLabel>
               <TextInput
-                className="rounded-lg p-3 text-base bg-gray-50 h-20"
-                style={{ textAlignVertical: 'top' }}
-                placeholder="Why are you taking this medication? (e.g., High blood pressure, Diabetes)"
+                style={[...getInputStyle('reasonForTreatment'), formStyles.inputMultiline]}
+                placeholder="Why are you taking this medication? (e.g., High blood pressure)"
+                placeholderTextColor="#9CA3AF"
                 value={reasonForTreatment}
                 onChangeText={setReasonForTreatment}
                 multiline
                 numberOfLines={2}
+                onFocus={() => {
+                  setFocusedField('reasonForTreatment');
+                  scrollToField('reasonForTreatment');
+                }}
+                onBlur={() => setFocusedField(null)}
               />
             </View>
 
-            {/* Notes */}
-            <View className="mb-6">
-              <Text className="text-base font-semibold text-gray-800 mb-2">Notes</Text>
+            <View
+              style={formStyles.fieldGroup}
+              onLayout={(event) => onFieldLayout('notes', event)}
+            >
+              <FormLabel>Notes</FormLabel>
               <TextInput
-                className="rounded-lg p-3 text-base bg-gray-50 h-20"
-                style={{ textAlignVertical: 'top' }}
+                style={[...getInputStyle('notes'), formStyles.inputMultiline]}
                 placeholder="Additional notes about this medication"
+                placeholderTextColor="#9CA3AF"
                 value={notes}
                 onChangeText={setNotes}
                 multiline
                 numberOfLines={3}
+                onFocus={() => {
+                  setFocusedField('notes');
+                  scrollToField('notes');
+                }}
+                onBlur={() => setFocusedField(null)}
               />
             </View>
 
-            {/* Quantity Remaining */}
-            <View 
-              className="mb-6"
-              onLayout={(event) => {
-                quantityRemainingYRef.current = event.nativeEvent.layout.y;
-              }}
+            <View
+              style={formStyles.fieldGroup}
+              onLayout={(event) => onFieldLayout('quantityRemaining', event)}
             >
-              <Text className="text-base font-semibold text-gray-800 mb-2">Quantity Remaining</Text>
+              <FormLabel>Quantity Remaining</FormLabel>
               <TextInput
-                className="rounded-lg p-3 text-base bg-gray-50"
+                style={getInputStyle('quantityRemaining')}
                 placeholder="e.g., 30 tablets"
+                placeholderTextColor="#9CA3AF"
                 value={quantityRemaining}
                 onChangeText={setQuantityRemaining}
                 keyboardType="number-pad"
                 onFocus={() => {
-                  setTimeout(() => {
-                    if (quantityRemainingYRef.current) {
-                      scrollToPosition(quantityRemainingYRef.current - 100);
-                    }
-                  }, 100);
+                  setFocusedField('quantityRemaining');
+                  scrollToField('quantityRemaining');
                 }}
+                onBlur={() => setFocusedField(null)}
               />
             </View>
 
-            {/* Low Stock Threshold */}
-            <View 
-              className="mb-6"
-              onLayout={(event) => {
-                lowStockYRef.current = event.nativeEvent.layout.y;
-              }}
+            <View
+              style={formStyles.fieldGroup}
+              onLayout={(event) => onFieldLayout('lowStockThreshold', event)}
             >
-              <Text className="text-base font-semibold text-gray-800 mb-2">Low Stock Alert (days)</Text>
+              <FormLabel>Low Stock Alert (days)</FormLabel>
               <TextInput
-                className="rounded-lg p-3 text-base bg-gray-50"
+                style={getInputStyle('lowStockThreshold')}
                 placeholder="7"
+                placeholderTextColor="#9CA3AF"
                 value={lowStockThreshold}
                 onChangeText={setLowStockThreshold}
                 keyboardType="number-pad"
                 onFocus={() => {
-                  setTimeout(() => {
-                    if (lowStockYRef.current) {
-                      scrollToPosition(lowStockYRef.current - 100);
-                    }
-                  }, 100);
+                  setFocusedField('lowStockThreshold');
+                  scrollToField('lowStockThreshold');
                 }}
+                onBlur={() => setFocusedField(null)}
               />
             </View>
           </View>
         </ScrollView>
+
+        <View style={styles.footer}>
+          <TouchableOpacity
+            style={[styles.saveButton, !canContinue && styles.saveButtonDisabled]}
+            onPress={handleSave}
+            disabled={!canContinue}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.saveButtonText}>
+              {timesOfDay.length > 0 ? 'Save & Continue' : 'Add Time to Continue'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </KeyboardAvoidingView>
 
-      {/* Footer */}
-      <View className="p-6 border-t border-gray-300">
-        <TouchableOpacity
-          className={`py-4 rounded-xl items-center ${
-            canContinue ? '' : 'bg-gray-400'
-          }`}
-          style={{
-            backgroundColor: canContinue ? '#90CDF4' : '#9ca3af',
-          }}
-          onPress={handleSave}
-          disabled={!canContinue}
-          activeOpacity={0.8}
-        >
-          <Text className="text-white text-lg font-semibold">
-            {timesOfDay.length > 0 ? 'Save & Continue' : 'Add Time to Continue'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      <Modal
+        visible={showSuccessModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowSuccessModal(false)}
+      >
+        <View style={modalStyles.overlay}>
+          <View style={modalStyles.card}>
+            <View style={modalStyles.iconWrap}>
+              <MaterialIcons name="check" size={36} color="#FFFFFF" />
+            </View>
+
+            <Text style={modalStyles.title}>Medication added!</Text>
+            {savedMedicationName ? (
+              <Text style={modalStyles.medName}>{savedMedicationName}</Text>
+            ) : null}
+            <Text style={modalStyles.subtitle}>
+              Your reminder is set. Create an account to sync across devices, invite caregivers, and unlock Premium.
+            </Text>
+
+            <TouchableOpacity
+              style={modalStyles.primaryButton}
+              onPress={goToCreateAccount}
+              activeOpacity={0.85}
+            >
+              <Text style={modalStyles.primaryButtonText}>Create Account</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={modalStyles.secondaryButton}
+              onPress={goToDashboard}
+              activeOpacity={0.85}
+            >
+              <Text style={modalStyles.secondaryButtonText}>Continue to Dashboard</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
+
+const modalStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  card: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    paddingHorizontal: 24,
+    paddingTop: 32,
+    paddingBottom: 24,
+    alignItems: 'center',
+  },
+  iconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: SKY_BLUE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  medName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: SKY_BLUE,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 21,
+    marginBottom: 24,
+    paddingHorizontal: 4,
+  },
+  primaryButton: {
+    width: '100%',
+    backgroundColor: SKY_BLUE,
+    paddingVertical: 15,
+    borderRadius: 28,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  secondaryButton: {
+    width: '100%',
+    paddingVertical: 15,
+    borderRadius: 28,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: SKY_BLUE,
+  },
+  secondaryButtonText: {
+    color: SKY_BLUE,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+});
+
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  flex: {
+    flex: 1,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingVertical: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  headerTitle: {
+    flex: 1,
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  skipButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  skipText: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: SKY_BLUE,
+  },
+  formContent: {
+    paddingHorizontal: 24,
+    paddingTop: 20,
+  },
+  footer: {
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+  },
+  saveButton: {
+    backgroundColor: SKY_BLUE,
+    paddingVertical: 16,
+    borderRadius: 28,
+    alignItems: 'center',
+  },
+  saveButtonDisabled: {
+    backgroundColor: '#9CA3AF',
+  },
+  saveButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+});
 
 export default AddFirstMedicationScreen;

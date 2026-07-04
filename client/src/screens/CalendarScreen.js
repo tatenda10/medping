@@ -12,8 +12,10 @@ import syncService from '../services/syncService';
 import { getMedicationIcon } from '../utils/medicationIcons';
 import { useAuthCheck } from '../hooks/useAuthCheck';
 import CreateAccountPrompt from '../components/CreateAccountPrompt';
+import { getAuthToken } from '../utils/authToken';
 
 const CalendarScreen = ({ navigation }) => {
+  const rootNavigation = navigation.getParent();
   const { isAuthenticated } = useAuthCheck();
   const [showCreateAccountPrompt, setShowCreateAccountPrompt] = useState(false);
   const [medications, setMedications] = useState([]);
@@ -73,7 +75,7 @@ const CalendarScreen = ({ navigation }) => {
       const online = await syncService.isOnline();
       if (online) {
         try {
-          const token = await AsyncStorage.getItem('authToken');
+          const token = await getAuthToken();
           const response = await axios.get(`${BASE_URL}/medications`, {
             headers: {
               'Authorization': `Bearer ${token}`,
@@ -213,8 +215,7 @@ const CalendarScreen = ({ navigation }) => {
       const online = await syncService.isOnline();
       if (online && isAuthenticated) {
         try {
-          const token = await AsyncStorage.getItem('authToken');
-          await syncService.syncDoseLogs(token);
+          await syncService.syncDoseLogs();
         } catch (error) {
           console.error('Error syncing dose log:', error);
         }
@@ -313,7 +314,7 @@ const CalendarScreen = ({ navigation }) => {
           <TouchableOpacity 
             className="w-10 h-10 rounded-full justify-center items-center"
             style={{ backgroundColor: '#90CDF4' }}
-            onPress={() => navigation.navigate('AddMedicine')}
+            onPress={() => rootNavigation?.navigate('AddMedicine')}
           >
             <MaterialIcons name="add" size={24} color="white" />
           </TouchableOpacity>
@@ -397,7 +398,7 @@ const CalendarScreen = ({ navigation }) => {
                 <TouchableOpacity
                   key={`${med.id}-${entry.time}-${index}`}
                   className="bg-white rounded-xl p-4 mb-3 border border-gray-200 flex-row items-center"
-                  onPress={() => navigation.navigate('MedicationDetail', { medicationId: med.id })}
+                  onPress={() => rootNavigation?.navigate('MedicationDetail', { medicationId: med.id })}
                   activeOpacity={0.7}
                 >
                   <View 
@@ -456,7 +457,7 @@ const CalendarScreen = ({ navigation }) => {
                 <TouchableOpacity
                   key={`${med.id}-${entry.time}-${index}`}
                   className="bg-white rounded-xl p-4 mb-3 border border-gray-200 flex-row items-center"
-                  onPress={() => navigation.navigate('MedicationDetail', { medicationId: med.id })}
+                  onPress={() => rootNavigation?.navigate('MedicationDetail', { medicationId: med.id })}
                   activeOpacity={0.7}
                 >
                   <View 
@@ -515,7 +516,7 @@ const CalendarScreen = ({ navigation }) => {
                 <TouchableOpacity
                   key={`${med.id}-${entry.time}-${index}`}
                   className="bg-white rounded-xl p-4 mb-3 border border-gray-200 flex-row items-center"
-                  onPress={() => navigation.navigate('MedicationDetail', { medicationId: med.id })}
+                  onPress={() => rootNavigation?.navigate('MedicationDetail', { medicationId: med.id })}
                   activeOpacity={0.7}
                 >
                   <View 

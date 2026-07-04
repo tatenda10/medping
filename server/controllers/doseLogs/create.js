@@ -1,4 +1,4 @@
-const prisma = require('../../config/database');
+const { query } = require('../../config/mysql');
 const caregiverNotificationService = require('../../services/caregiverNotificationService');
 
 const createDoseLog = async (req, res) => {
@@ -20,12 +20,11 @@ const createDoseLog = async (req, res) => {
     }
 
     // Verify medication belongs to user
-    const medication = await prisma.medication.findFirst({
-      where: {
-        id: medication_id,
-        user_id: userId,
-      },
-    });
+    const medicationRows = await query(
+      'SELECT id FROM medications WHERE id = ? AND user_id = ? LIMIT 1',
+      [medication_id, userId]
+    );
+    const medication = medicationRows?.[0] || null;
 
     if (!medication) {
       return res.status(404).json({
@@ -34,17 +33,29 @@ const createDoseLog = async (req, res) => {
       });
     }
 
+    const idRows = await query('SELECT UUID() as id');
+    const doseLogId = idRows?.[0]?.id;
+
     // Create dose log
-    const doseLog = await prisma.doseLog.create({
-      data: {
-        user_id: userId,
+    await query(
+      `INSERT INTO dose_logs (
+         id, user_id, medication_id, scheduled_time, status, taken_time, notes, created_at
+       ) VALUES (
+         ?, ?, ?, ?, ?, ?, ?, NOW()
+       )`,
+      [
+        doseLogId,
+        userId,
         medication_id,
-        scheduled_time: new Date(scheduled_time),
+        new Date(scheduled_time),
         status,
-        taken_time: status === 'taken' ? new Date() : null,
-        notes: notes || null,
-      },
-    });
+        status === 'taken' ? new Date() : null,
+        notes || null,
+      ]
+    );
+
+    const doseRows = await query('SELECT * FROM dose_logs WHERE id = ? LIMIT 1', [doseLogId]);
+    const doseLog = doseRows?.[0] || null;
 
     // Notify caregivers if dose was missed
     if (status === 'missed') {

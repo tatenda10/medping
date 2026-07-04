@@ -2,8 +2,12 @@ import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
+import { useAuth } from '../context/AuthContext';
 
-const CustomTabBar = ({ state, descriptors, navigation }) => {
+const CustomTabBar = ({ state, descriptors, navigation, onBeforeAddMedicine }) => {
+  const { isAuthenticated, isLoaded } = useAuth();
+  const settingsLabel = isLoaded && !isAuthenticated ? 'ACCOUNT' : 'SETTINGS';
+
   const tabs = [
     { 
       name: 'Dashboard', 
@@ -28,14 +32,23 @@ const CustomTabBar = ({ state, descriptors, navigation }) => {
     },
     { 
       name: 'Settings', 
-      label: 'SETTINGS', 
+      label: settingsLabel, 
       icon: (color, size) => <Ionicons name="settings-outline" size={size} color={color} /> 
     },
   ];
 
+  const openRootScreen = (screenName) => {
+    navigation.getParent()?.navigate(screenName);
+  };
+
+  const openAddMedicine = () => {
+    onBeforeAddMedicine?.();
+    openRootScreen('AddMedicine');
+  };
+
   return (
     <SafeAreaView className="bg-white" edges={['bottom']} style={{ paddingTop: 0 }}>
-      <View className="flex-row pt-3 pb-5 border-t border-gray-200 bg-white items-center" style={{ minHeight: 70 }}>
+      <View className="flex-row pt-2 pb-2 border-t border-gray-200 bg-white items-center" style={{ minHeight: 58 }}>
         {tabs.map((tab) => {
           const route = state.routes.find(r => r.name === tab.name);
           if (!route) {
@@ -45,7 +58,7 @@ const CustomTabBar = ({ state, descriptors, navigation }) => {
                 <TouchableOpacity
                   key={tab.name}
                   className="w-15 h-15 items-center justify-center mb-4"
-                  onPress={() => navigation.navigate('AddMedicine')}
+                  onPress={openAddMedicine}
                   activeOpacity={0.7}
                 >
                   <View 
@@ -87,7 +100,7 @@ const CustomTabBar = ({ state, descriptors, navigation }) => {
               <TouchableOpacity
                 key={tab.name}
                 className="w-15 h-15 items-center justify-center mb-4"
-                onPress={() => navigation.navigate('AddMedicine')}
+                onPress={openAddMedicine}
                 activeOpacity={0.7}
               >
                 <View 

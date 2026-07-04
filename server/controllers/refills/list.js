@@ -1,37 +1,37 @@
-const prisma = require('../../config/database');
+const { query } = require('../../config/mysql');
 
 const listRefills = async (req, res) => {
   try {
     const userId = req.user.id;
     const { medication_id } = req.query;
-
-    const where = {
-      user_id: userId,
-    };
-
+    const params = [userId];
+    let medFilterSql = '';
     if (medication_id) {
-      where.medication_id = medication_id;
+      medFilterSql = ' AND r.medication_id = ?';
+      params.push(medication_id);
     }
 
-    const refills = await prisma.refill.findMany({
-      where,
-      include: {
-        medication: {
-          select: {
-            id: true,
-            name: true,
-            dosage: true,
-          },
-        },
+    const refills = await query(
+      `SELECT r.*, m.id as medication_id_ref, m.name as medication_name, m.dosage as medication_dosage
+       FROM refills r
+       JOIN medications m ON m.id = r.medication_id
+       WHERE r.user_id = ?${medFilterSql}
+       ORDER BY r.refill_date DESC`,
+      params
+    );
+
+    const shaped = refills.map((r) => ({
+      ...r,
+      medication: {
+        id: r.medication_id_ref,
+        name: r.medication_name,
+        dosage: r.medication_dosage,
       },
-      orderBy: {
-        refill_date: 'desc',
-      },
-    });
+    }));
 
     res.json({
       success: true,
-      refills,
+      refills: shaped,
     });
   } catch (error) {
     console.error('Error listing refills:', error);

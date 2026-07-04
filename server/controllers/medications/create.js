@@ -1,4 +1,4 @@
-const prisma = require('../../config/database');
+const { query } = require('../../config/mysql');
 const caregiverNotificationService = require('../../services/caregiverNotificationService');
 
 const createMedication = async (req, res) => {
@@ -18,6 +18,11 @@ const createMedication = async (req, res) => {
       notes,
       quantity_remaining,
       low_stock_threshold,
+      reason_for_treatment,
+      schedule_pattern,
+      schedule_pattern_data,
+      injection_site_data,
+      photo_url,
     } = req.body;
 
     // Validation
@@ -35,30 +40,58 @@ const createMedication = async (req, res) => {
       });
     }
 
+    const medicationIdRows = await query('SELECT UUID() as id');
+    const medicationId = medicationIdRows?.[0]?.id;
+
     // Create medication
-    const medication = await prisma.medication.create({
-      data: {
-        user: {
-          connect: { id: userId },
-        },
+    await query(
+      `INSERT INTO medications (
+         id, user_id, name, dosage, medication_type, frequency, times_per_day, times_of_day,
+         start_date, end_date, is_continuous, food_instructions, notes, photo_url,
+         quantity_remaining, low_stock_threshold, reason_for_treatment, schedule_pattern,
+         schedule_pattern_data, injection_site_data, created_at, updated_at
+       ) VALUES (
+         ?, ?, ?, ?, ?, ?, ?, ?,
+         ?, ?, ?, ?, ?, ?,
+         ?, ?, ?, ?,
+         ?, ?, NOW(), NOW()
+       )`,
+      [
+        medicationId,
+        userId,
         name,
         dosage,
-        medication_type: medication_type || 'tablet',
-        frequency: frequency || 'daily',
-        times_per_day: times_per_day || times_of_day.length,
-        times_of_day: times_of_day,
-        start_date: new Date(start_date),
-        end_date: end_date ? new Date(end_date) : null,
-        is_continuous: is_continuous !== undefined ? is_continuous : true,
-        food_instructions: food_instructions || null,
-        notes: notes || null,
-        quantity_remaining: quantity_remaining || null,
-        low_stock_threshold: low_stock_threshold || 7,
-      },
-    });
+        medication_type || 'tablet',
+        frequency || 'daily',
+        times_per_day || times_of_day.length,
+        JSON.stringify(times_of_day),
+        new Date(start_date),
+        end_date ? new Date(end_date) : null,
+        is_continuous !== undefined ? !!is_continuous : true,
+        food_instructions || null,
+        notes || null,
+        photo_url || null,
+        quantity_remaining ?? null,
+        low_stock_threshold ?? 7,
+        reason_for_treatment || null,
+        schedule_pattern || 'daily',
+        schedule_pattern_data ? JSON.stringify(schedule_pattern_data) : null,
+        injection_site_data ? JSON.stringify(injection_site_data) : null,
+      ]
+    );
+
+    const createdRows = await query('SELECT * FROM medications WHERE id = ? LIMIT 1', [
+      medicationId,
+    ]);
+    const medication = createdRows?.[0] || null;
+    if (medication && typeof medication.times_of_day === 'string') {
+      try {
+        medication.times_of_day = JSON.parse(medication.times_of_day);
+      } catch (e) {}
+    }
 
     // Notify caregivers about new medication
-    caregiverNotificationService.notifyNewMedication(userId, medication.id)
+    caregiverNotificationService.notifyNewMedication(userId, medicationId)
       .catch(err => console.error('Error notifying caregivers:', err));
 
     res.status(201).json({

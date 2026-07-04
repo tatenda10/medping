@@ -27,6 +27,7 @@ export default async function clearAllData(showAlert = false) {
       'userData',
       'onboarding_completed',
       'onboarding_questionnaire',
+      'pending_post_onboarding_paywall',
     ];
 
     // Get all keys to see what's stored

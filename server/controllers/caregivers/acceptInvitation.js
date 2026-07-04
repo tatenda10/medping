@@ -1,4 +1,4 @@
-const prisma = require('../../config/database');
+const { query } = require('../../config/mysql');
 
 const acceptInvitation = async (req, res) => {
   try {
@@ -6,25 +6,17 @@ const acceptInvitation = async (req, res) => {
     const userId = req.user.id;
 
     // Find the invitation where the current user is the care recipient
-    const relationship = await prisma.caregiverRelationship.findUnique({
-      where: { id: invitationId },
-      include: {
-        caregiver: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-        care_recipient: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
-    });
+    const rows = await query(
+      `SELECT cr.*, c.id as caregiver_id_u, c.name as caregiver_name, c.email as caregiver_email,
+              r.id as care_recipient_id_u, r.name as care_recipient_name, r.email as care_recipient_email
+       FROM caregiver_relationships cr
+       JOIN users c ON c.id = cr.caregiver_id
+       JOIN users r ON r.id = cr.care_recipient_id
+       WHERE cr.id = ?
+       LIMIT 1`,
+      [invitationId]
+    );
+    const relationship = rows?.[0] || null;
 
     if (!relationship) {
       return res.status(404).json({
@@ -49,32 +41,30 @@ const acceptInvitation = async (req, res) => {
     }
 
     // Update status to accepted
-    const updatedRelationship = await prisma.caregiverRelationship.update({
-      where: { id: invitationId },
-      data: { status: 'accepted' },
-      include: {
-        caregiver: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
-    });
+    await query(
+      `UPDATE caregiver_relationships SET status = 'accepted', updated_at = NOW() WHERE id = ?`,
+      [invitationId]
+    );
+    const updatedRows = await query('SELECT * FROM caregiver_relationships WHERE id = ? LIMIT 1', [
+      invitationId,
+    ]);
+    const updatedRelationship = updatedRows?.[0] || null;
 
     // Create notification for the caregiver
-    await prisma.notification.create({
-      data: {
-        user_id: relationship.caregiver_id,
-        type: 'caregiver_alert',
-        title: 'Invitation Accepted',
-        message: `${relationship.care_recipient.name || 'User'} has accepted your invitation`,
-        data: {
-          relationship_id: relationship.id,
-        },
-      },
-    });
+    const notifIdRows = await query('SELECT UUID() as id');
+    const notifId = notifIdRows?.[0]?.id;
+    await query(
+      `INSERT INTO notifications (id, user_id, type, title, message, data, is_read, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 0, NOW())`,
+      [
+        notifId,
+        relationship.caregiver_id,
+        'caregiver_alert',
+        'Invitation Accepted',
+        `${relationship.care_recipient_name || 'User'} has accepted your invitation`,
+        JSON.stringify({ relationship_id: relationship.id }),
+      ]
+    );
 
     res.json({
       success: true,

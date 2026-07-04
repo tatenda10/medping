@@ -1,4 +1,4 @@
-const prisma = require('../../config/database');
+const { transaction } = require('../../config/mysql');
 
 /**
  * Delete user account and all associated data
@@ -7,91 +7,32 @@ const deleteAccount = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Delete all user data (Prisma cascade will handle related records)
-    // But we need to manually delete relationships where user is caregiver or recipient
-    
-    // Delete caregiver relationships where user is the caregiver
-    await prisma.caregiverRelationship.deleteMany({
-      where: {
-        caregiver_id: userId,
-      },
-    });
+    await transaction(async (tx) => {
+      // Caregiver relationships
+      await tx.execute('DELETE FROM caregiver_relationships WHERE caregiver_id = ?', [userId]);
+      await tx.execute('DELETE FROM caregiver_relationships WHERE care_recipient_id = ?', [userId]);
 
-    // Delete caregiver relationships where user is the care recipient
-    await prisma.caregiverRelationship.deleteMany({
-      where: {
-        care_recipient_id: userId,
-      },
-    });
+      // Notifications
+      await tx.execute('DELETE FROM notifications WHERE user_id = ?', [userId]);
 
-    // Delete all notifications
-    await prisma.notification.deleteMany({
-      where: {
-        user_id: userId,
-      },
-    });
+      // Vitals, appointments, health logs
+      await tx.execute('DELETE FROM vitals_logs WHERE user_id = ?', [userId]);
+      await tx.execute('DELETE FROM appointments WHERE user_id = ?', [userId]);
+      await tx.execute('DELETE FROM health_logs WHERE user_id = ?', [userId]);
 
-    // Delete all vitals logs
-    await prisma.vitalsLog.deleteMany({
-      where: {
-        user_id: userId,
-      },
-    });
+      // Refills, dose logs, medications
+      await tx.execute('DELETE FROM refills WHERE user_id = ?', [userId]);
+      await tx.execute('DELETE FROM dose_logs WHERE user_id = ?', [userId]);
+      await tx.execute('DELETE FROM medications WHERE user_id = ?', [userId]);
 
-    // Delete all appointments
-    await prisma.appointment.deleteMany({
-      where: {
-        user_id: userId,
-      },
-    });
+      // Dependents
+      await tx.execute('DELETE FROM dependents WHERE user_id = ?', [userId]);
 
-    // Delete all health logs
-    await prisma.healthLog.deleteMany({
-      where: {
-        user_id: userId,
-      },
-    });
+      // Profile
+      await tx.execute('DELETE FROM user_profiles WHERE user_id = ?', [userId]);
 
-    // Delete all refills
-    await prisma.refill.deleteMany({
-      where: {
-        user_id: userId,
-      },
-    });
-
-    // Delete all dose logs
-    await prisma.doseLog.deleteMany({
-      where: {
-        user_id: userId,
-      },
-    });
-
-    // Delete all medications (this will cascade to dose logs, but we already deleted them)
-    await prisma.medication.deleteMany({
-      where: {
-        user_id: userId,
-      },
-    });
-
-    // Delete all dependents
-    await prisma.dependent.deleteMany({
-      where: {
-        user_id: userId,
-      },
-    });
-
-    // Delete user profile (cascade from user, but delete explicitly to be safe)
-    await prisma.userProfile.deleteMany({
-      where: {
-        user_id: userId,
-      },
-    });
-
-    // Finally, delete the user (this should cascade delete the profile)
-    await prisma.user.delete({
-      where: {
-        id: userId,
-      },
+      // Finally user
+      await tx.execute('DELETE FROM users WHERE id = ?', [userId]);
     });
 
     res.json({

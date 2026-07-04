@@ -1,349 +1,386 @@
-import React, { useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, TextInput, Image, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { useSignUp, useOAuth } from '@clerk/clerk-expo';
-import { useAuth } from '../context/ClerkAuthContext';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import * as AuthSession from 'expo-auth-session';
+import * as WebBrowser from 'expo-web-browser';
+import { useSSO, useSignUp } from '@clerk/expo';
+import { useAuth } from '../context/AuthContext';
 import onboardingService from '../services/onboardingService';
 import firebaseService from '../services/firebaseService';
-import { clerkAxios } from '../utils/clerkAxios';
+import { navigateAfterAuthentication } from '../navigation/postAuthNavigation';
+
+WebBrowser.maybeCompleteAuthSession();
+
+const BRAND = {
+  ink: '#17324D',
+  azure: '#90CDF4',
+  mist: '#EBF8FF',
+  peach: '#FFF2E6',
+  cream: '#FFFDF9',
+  line: '#C5E3F6',
+  apple: '#101418',
+  google: '#FFFFFF',
+};
+
+const getClerkErrorMessage = (error, fallback) => {
+  if (error?.errors?.[0]?.longMessage) return error.errors[0].longMessage;
+  if (error?.errors?.[0]?.message) return error.errors[0].message;
+  if (error?.message) return error.message;
+  return fallback;
+};
 
 const SignUpScreen = ({ onSignUpSuccess }) => {
   const navigation = useNavigation();
-  const scrollViewRef = useRef(null);
+  const { isAuthenticated, userId, isLoaded: authLoaded } = useAuth();
   const { signUp, setActive, isLoaded } = useSignUp();
-  const { userId } = useAuth();
-  const { startOAuthFlow: startGoogleOAuth } = useOAuth({ 
-    strategy: 'oauth_google',
-    redirectUrl: 'mediping://oauth-callback',
-  });
-  const { startOAuthFlow: startAppleOAuth } = useOAuth({ 
-    strategy: 'oauth_apple',
-    redirectUrl: 'mediping://oauth-callback',
-  });
-  const [loading, setLoading] = useState(false);
-  const [loadingProvider, setLoadingProvider] = useState(null); // 'google', 'apple', or 'email'
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const { startSSOFlow } = useSSO();
+  const handledAuthRef = useRef(false);
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [emailAddress, setEmailAddress] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const [loadingProvider, setLoadingProvider] = useState(null);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+
+    void WebBrowser.warmUpAsync();
+    return () => {
+      void WebBrowser.coolDownAsync();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authLoaded || !isAuthenticated || !userId || handledAuthRef.current) {
+      return;
+    }
+
+    handledAuthRef.current = true;
+
+    const finalizeSignUp = async () => {
+      try {
+        const hasGuestData = await onboardingService.hasGuestMedications();
+        if (hasGuestData) {
+          await onboardingService.migrateGuestDataToUser(userId, null);
+        } else {
+          await onboardingService.markOnboardingCompleted();
+        }
+      } catch (error) {
+        console.error('Guest migration after Clerk sign-up failed:', error);
+      }
+
+      firebaseService.userSignedUp('clerk');
+
+      if (onSignUpSuccess) {
+        onSignUpSuccess();
+      } else {
+        await navigateAfterAuthentication();
+      }
+    };
+
+    finalizeSignUp();
+  }, [authLoaded, isAuthenticated, navigation, onSignUpSuccess, userId]);
+
+  const redirectUrl = useMemo(
+    () =>
+      AuthSession.makeRedirectUri({
+        scheme: 'mediping',
+        path: 'sso-callback',
+      }),
+    []
+  );
+
+  const handleEmailSignUp = async () => {
+    if (!isLoaded || !signUp) return;
+
+    const normalizedEmail = emailAddress.trim().toLowerCase();
+    if (!firstName.trim() || !lastName.trim() || !normalizedEmail || !password.trim()) {
+      Alert.alert('Missing details', 'Fill in your name, email, and password to create an account.');
+      return;
+    }
+
+    setLoadingProvider('email');
+    try {
+      await signUp.create({
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        emailAddress: normalizedEmail,
+        password,
+      });
+
+      await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
+      setAwaitingVerification(true);
+    } catch (error) {
+      Alert.alert('Could not create account', getClerkErrorMessage(error, 'Please try again.'));
+    } finally {
+      setLoadingProvider(null);
+    }
+  };
+
+  const handleVerifyEmail = async () => {
+    if (!signUp || !verificationCode.trim()) {
+      Alert.alert('Code required', 'Enter the verification code from your email.');
+      return;
+    }
+
+    setLoadingProvider('verify');
+    try {
+      const result = await signUp.attemptEmailAddressVerification({
+        code: verificationCode.trim(),
+      });
+
+      if (result.status !== 'complete') {
+        Alert.alert('Verification incomplete', 'Please try again.');
+        return;
+      }
+
+      await setActive({ session: result.createdSessionId });
+    } catch (error) {
+      Alert.alert('Verification failed', getClerkErrorMessage(error, 'Please try the code again.'));
+    } finally {
+      setLoadingProvider(null);
+    }
+  };
+
+  const completeSocialSession = async (result) => {
+    if (result?.createdSessionId && result?.setActive) {
+      await result.setActive({ session: result.createdSessionId });
+      return;
+    }
+
+    if (result?.signUp?.status === 'missing_requirements') {
+      Alert.alert('More details required', 'This social account still needs additional fields in Clerk before the sign-up can finish.');
+      return;
+    }
+
+    Alert.alert('Sign up incomplete', 'The provider returned an incomplete sign-up. Check your Clerk configuration and try again.');
+  };
 
   const handleGoogleSignUp = async () => {
-    if (!isLoaded) return;
-    
-    setLoading(true);
     setLoadingProvider('google');
-    
     try {
-      // Start OAuth flow - this will open a browser/webview
-      const { createdSessionId, setActive } = await startGoogleOAuth({
-        redirectUrl: 'mediping://oauth-callback',
+      const result = await startSSOFlow({
+        strategy: 'oauth_google',
+        redirectUrl,
       });
-      
-      if (createdSessionId) {
-        await setActive({ session: createdSessionId });
-        
-        // Track signup
-        firebaseService.userSignedUp('google');
-        
-        // Call success callback
-        // Migration will be handled automatically when user data is synced
-        if (onSignUpSuccess) {
-          onSignUpSuccess();
-        }
-      }
+      await completeSocialSession(result);
     } catch (error) {
-      console.error('Google sign up error:', error);
-      // Check if it's the origin error - might be a Clerk internal issue
-      if (error.message?.includes('origin') || error.message?.includes('undefined')) {
-        Alert.alert(
-          'OAuth Error', 
-          'There was an issue with the OAuth configuration. Please ensure Clerk is properly configured in your dashboard.'
-        );
-      } else {
-        Alert.alert('Sign Up Failed', error.message || 'Failed to sign up with Google');
+      if (error?.code !== 'ERR_REQUEST_CANCELED') {
+        Alert.alert('Google sign-up failed', getClerkErrorMessage(error, 'Check your Google and Clerk OAuth setup, then try again.'));
       }
     } finally {
-      setLoading(false);
       setLoadingProvider(null);
     }
   };
 
   const handleAppleSignUp = async () => {
-    if (!isLoaded) return;
-    
-    setLoading(true);
     setLoadingProvider('apple');
-    
     try {
-      // Start OAuth flow - this will open a browser/webview
-      const { createdSessionId, setActive } = await startAppleOAuth({
-        redirectUrl: 'mediping://oauth-callback',
+      const result = await startSSOFlow({
+        strategy: 'oauth_apple',
+        redirectUrl,
       });
-      
-      if (createdSessionId) {
-        await setActive({ session: createdSessionId });
-        
-        // Track signup
-        firebaseService.userSignedUp('apple');
-        
-        // Call success callback
-        // Migration will be handled automatically when user data is synced
-        if (onSignUpSuccess) {
-          onSignUpSuccess();
-        }
-      }
+      await completeSocialSession(result);
     } catch (error) {
-      console.error('Apple sign up error:', error);
-      // Check if it's the origin error - might be a Clerk internal issue
-      if (error.message?.includes('origin') || error.message?.includes('undefined')) {
-        Alert.alert(
-          'OAuth Error', 
-          'There was an issue with the OAuth configuration. Please ensure Clerk is properly configured in your dashboard.'
-        );
-      } else {
-        Alert.alert('Sign Up Failed', error.message || 'Failed to sign up with Apple');
+      if (error?.code !== 'ERR_REQUEST_CANCELED') {
+        Alert.alert('Apple sign-up failed', getClerkErrorMessage(error, 'Check your Apple and Clerk configuration, then try again.'));
       }
     } finally {
-      setLoading(false);
       setLoadingProvider(null);
     }
   };
 
-  const handleEmailSignUp = async () => {
-    if (!name.trim() || !email.trim() || !password.trim() || !confirmPassword.trim()) {
-      Alert.alert('Error', 'Please fill in all fields');
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
-      return;
-    }
-
-    if (password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
-      return;
-    }
-
-    if (!isLoaded) return;
-
-    setLoading(true);
-    setLoadingProvider('email');
-    
-    try {
-      // Create user with Clerk
-      const result = await signUp.create({
-        emailAddress: email,
-        password: password,
-        firstName: name.split(' ')[0] || name,
-        lastName: name.split(' ').slice(1).join(' ') || '',
-      });
-
-      // Complete sign up (verify email if required)
-      if (result.status === 'complete') {
-        await setActive({ session: result.createdSessionId });
-        
-        // Create user record on server with Clerk userId
-        // The server will automatically create the user on first authenticated request
-        // So we don't need to call a separate endpoint here
-        
-        // Migrate guest data (medications, questionnaire) to user account
-        try {
-          const migrationResult = await onboardingService.migrateGuestDataToUser(
-            result.id, // Use Clerk userId
-            null // No token needed, using Clerk
-          );
-          
-          if (migrationResult.medicationsMigrated > 0) {
-            Alert.alert(
-              'Success!',
-              `Your account has been created and ${migrationResult.medicationsMigrated} medication(s) have been saved!`,
-              [{ text: 'OK' }]
-            );
-          }
-        } catch (migrationError) {
-          console.error('Migration error:', migrationError);
-          // Don't block signup if migration fails
-        }
-        
-        // Track signup
-        firebaseService.userSignedUp('email');
-        
-        // Call success callback
-        if (onSignUpSuccess) {
-          onSignUpSuccess();
-        }
-      } else {
-        // Email verification required
-        Alert.alert(
-          'Verification Required',
-          'Please check your email to verify your account before signing in.',
-          [{ text: 'OK' }]
-        );
-      }
-    } catch (error) {
-      console.error('Email sign up error:', error);
-      const errorMessage = error.errors?.[0]?.message || error.message || 'Failed to create account';
-      
-      // Handle email already exists
-      if (errorMessage.includes('already exists') || errorMessage.includes('already registered')) {
-        Alert.alert(
-          'Email Already Registered',
-          'This email is already registered. Would you like to log in instead?',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Log In', 
-              onPress: () => navigation.navigate('Login')
-            }
-          ]
-        );
-      } else {
-        Alert.alert('Sign Up Failed', errorMessage);
-      }
-    } finally {
-      setLoading(false);
-      setLoadingProvider(null);
-    }
-  };
+  const isBusy = loadingProvider !== null;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      <View style={styles.glowTop} />
+      <View style={styles.glowBottom} />
+
       <KeyboardAvoidingView
         style={styles.keyboardView}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 16 : 0}
       >
-        <ScrollView 
+        <ScrollView
           contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          bounces={false}
+          showsVerticalScrollIndicator={false}
         >
-        <View style={styles.logoContainer}>
-          <Image 
-            source={require('../../assets/logo.png')} 
-            style={styles.logo}
-            resizeMode="contain"
-          />
-        </View>
+          <View style={styles.hero}>
+            <View style={styles.logoShell}>
+              <Image source={require('../../assets/logo.png')} style={styles.logo} resizeMode="contain" />
+            </View>
+          </View>
 
-        <Text style={styles.subtitle}>Create your account</Text>
-
-        <View style={styles.formContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder="Full Name"
-            placeholderTextColor="#999"
-            value={name}
-            onChangeText={setName}
-            autoCapitalize="words"
-            autoCorrect={false}
-            returnKeyType="next"
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            placeholderTextColor="#999"
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="next"
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor="#999"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="next"
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Confirm Password"
-            placeholderTextColor="#999"
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            secureTextEntry
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="done"
-          />
-
-          <TouchableOpacity
-            style={[styles.button, styles.emailButton]}
-            onPress={handleEmailSignUp}
-            disabled={loading || !isLoaded}
-          >
-            {loading && loadingProvider === 'email' ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Sign Up</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.dividerContainer}>
-          <View style={styles.divider} />
-          <Text style={styles.dividerText}>OR</Text>
-          <View style={styles.divider} />
-        </View>
-
-        <View style={styles.socialContainer}>
-          <TouchableOpacity
-            style={[styles.button, styles.googleButton]}
-            onPress={handleGoogleSignUp}
-            disabled={loading || !isLoaded}
-          >
-            {loading && loadingProvider === 'google' ? (
-              <ActivityIndicator color="#4285F4" />
-            ) : (
-              <View style={styles.socialButtonContent}>
-                <Image
-                  source={require('../../assets/Google__G__logo.svg.webp')}
-                  style={styles.socialIcon}
-                  resizeMode="contain"
+          <View style={styles.card}>
+            {!awaitingVerification ? (
+              <>
+                <Text style={styles.label}>First name</Text>
+                <TextInput
+                  style={styles.input}
+                  value={firstName}
+                  onChangeText={setFirstName}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  placeholder="First name"
+                  placeholderTextColor="#7E94B2"
                 />
-                <Text style={styles.googleButtonText}>Sign up with Google</Text>
-              </View>
-            )}
-          </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.button, styles.appleButton]}
-            onPress={handleAppleSignUp}
-            disabled={loading || !isLoaded}
-          >
-            {loading && loadingProvider === 'apple' ? (
-              <ActivityIndicator color="#000" />
-            ) : (
-              <View style={styles.socialButtonContent}>
-                <Image
-                  source={require('../../assets/apple logo.png')}
-                  style={styles.appleIcon}
-                  resizeMode="contain"
+                <Text style={styles.label}>Last name</Text>
+                <TextInput
+                  style={styles.input}
+                  value={lastName}
+                  onChangeText={setLastName}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  placeholder="Last name"
+                  placeholderTextColor="#7E94B2"
                 />
-                <Text style={styles.appleButtonText}>Sign up with Apple</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        </View>
 
-        <View style={styles.loginContainer}>
-          <Text style={styles.loginText}>Already have an account? </Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Login')}>
-            <Text style={styles.loginLink}>Sign in</Text>
-          </TouchableOpacity>
-        </View>
+                <Text style={styles.label}>Email</Text>
+                <TextInput
+                  style={styles.input}
+                  value={emailAddress}
+                  onChangeText={setEmailAddress}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                  placeholder="name@example.com"
+                  placeholderTextColor="#7E94B2"
+                />
+
+                <Text style={styles.label}>Password</Text>
+                <TextInput
+                  style={styles.input}
+                  value={password}
+                  onChangeText={setPassword}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry
+                  placeholder="Create a password"
+                  placeholderTextColor="#7E94B2"
+                />
+
+                <TouchableOpacity
+                  style={[styles.primaryButton, isBusy && styles.primaryButtonDisabled]}
+                  onPress={handleEmailSignUp}
+                  disabled={isBusy}
+                >
+                  {loadingProvider === 'email' ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <Text style={styles.primaryButtonText}>Create account</Text>
+                      <MaterialIcons name="arrow-forward" size={18} color="#fff" />
+                    </>
+                  )}
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <View style={styles.notice}>
+                  <MaterialIcons name="mark-email-read" size={20} color={BRAND.azure} />
+                  <Text style={styles.noticeText}>
+                    We sent a verification code to your email. Enter it below to finish creating your account.
+                  </Text>
+                </View>
+
+                <Text style={styles.label}>Verification code</Text>
+                <TextInput
+                  style={styles.input}
+                  value={verificationCode}
+                  onChangeText={setVerificationCode}
+                  keyboardType="number-pad"
+                  placeholder="Enter code"
+                  placeholderTextColor="#7E94B2"
+                />
+
+                <TouchableOpacity
+                  style={[styles.primaryButton, isBusy && styles.primaryButtonDisabled]}
+                  onPress={handleVerifyEmail}
+                  disabled={isBusy}
+                >
+                  {loadingProvider === 'verify' ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Verify and continue</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.linkRow}
+                  onPress={() => {
+                    setAwaitingVerification(false);
+                    setVerificationCode('');
+                  }}
+                >
+                  <Text style={styles.secondaryLink}>Back to details</Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            <View style={styles.dividerRow}>
+              <View style={styles.divider} />
+              <Text style={styles.dividerLabel}>or use</Text>
+              <View style={styles.divider} />
+            </View>
+
+            <TouchableOpacity
+              style={[styles.socialButton, styles.googleButton]}
+              onPress={handleGoogleSignUp}
+              disabled={isBusy}
+            >
+              {loadingProvider === 'google' ? (
+                <ActivityIndicator color={BRAND.ink} />
+              ) : (
+                <>
+                  <View style={styles.googleBadge}>
+                    <Text style={styles.googleBadgeText}>G</Text>
+                  </View>
+                  <Text style={styles.googleButtonText}>Continue with Google</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.socialButton, styles.appleButton]}
+              onPress={handleAppleSignUp}
+              disabled={isBusy}
+            >
+              {loadingProvider === 'apple' ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="logo-apple" size={20} color="#fff" />
+                  <Text style={styles.appleButtonText}>Continue with Apple</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Already have an account?</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('Login')}>
+              <Text style={styles.footerLink}>Sign in</Text>
+            </TouchableOpacity>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -353,7 +390,7 @@ const SignUpScreen = ({ onSignUpSuccess }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: BRAND.cream,
   },
   keyboardView: {
     flex: 1,
@@ -361,126 +398,182 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: 20,
-    paddingBottom: 20,
+    paddingTop: 14,
+    paddingBottom: 28,
   },
-  logoContainer: {
+  glowTop: {
+    position: 'absolute',
+    top: -120,
+    right: -80,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: '#DCEFFB',
+  },
+  glowBottom: {
+    position: 'absolute',
+    bottom: -110,
+    left: -70,
+    width: 240,
+    height: 240,
+    borderRadius: 120,
+    backgroundColor: '#FFE4CC',
+  },
+  hero: {
+    alignItems: 'center',
+    paddingTop: 6,
+    marginBottom: 24,
+  },
+  logoShell: {
+    width: 110,
+    height: 110,
+    borderRadius: 34,
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: 20,
-    paddingBottom: 10,
+    marginBottom: 16,
   },
   logo: {
-    width: 150,
-    height: 150,
+    width: 82,
+    height: 82,
   },
-  subtitle: {
-    fontSize: 16,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 30,
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 28,
+    padding: 20,
   },
-  formContainer: {
-    width: '100%',
-    marginBottom: 20,
+  label: {
+    color: BRAND.ink,
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 8,
   },
   input: {
-    width: '100%',
-    height: 50,
+    height: 54,
+    borderRadius: 4,
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    paddingHorizontal: 15,
+    borderColor: '#D5E2F1',
+    backgroundColor: '#F8FBFF',
+    paddingHorizontal: 16,
+    color: BRAND.ink,
     fontSize: 16,
-    backgroundColor: '#fff',
-    marginBottom: 15,
+    marginBottom: 14,
   },
-  button: {
-    width: '100%',
-    padding: 15,
-    borderRadius: 8,
+  primaryButton: {
+    height: 56,
+    borderRadius: 4,
+    backgroundColor: BRAND.azure,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 50,
-  },
-  emailButton: {
-    backgroundColor: '#4285F4',
-    marginTop: 10,
-  },
-  googleButton: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#ddd',
-    marginBottom: 15,
-  },
-  appleButton: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#ddd',
-  },
-  socialButtonContent: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    gap: 8,
+    marginTop: 2,
   },
-  socialIcon: {
-    width: 20,
-    height: 20,
-    marginRight: 10,
+  primaryButtonDisabled: {
+    opacity: 0.65,
   },
-  appleIcon: {
-    width: 28,
-    height: 28,
-    marginRight: 10,
-  },
-  buttonText: {
+  primaryButtonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '800',
   },
-  googleButtonText: {
-    color: '#4285F4',
-    fontSize: 16,
-    fontWeight: '600',
+  notice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: BRAND.mist,
+    borderRadius: 4,
+    padding: 14,
+    marginBottom: 14,
   },
-  appleButtonText: {
-    color: '#000',
-    fontSize: 16,
-    fontWeight: '600',
+  noticeText: {
+    flex: 1,
+    color: '#4D6788',
+    fontSize: 13,
+    lineHeight: 19,
   },
-  dividerContainer: {
+  linkRow: {
+    alignItems: 'center',
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  secondaryLink: {
+    color: BRAND.azure,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  dividerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 20,
+    marginVertical: 18,
+    gap: 10,
   },
   divider: {
     flex: 1,
     height: 1,
-    backgroundColor: '#ddd',
+    backgroundColor: '#E4ECF6',
   },
-  dividerText: {
-    marginHorizontal: 15,
-    fontSize: 14,
-    color: '#999',
+  dividerLabel: {
+    color: '#7A8FAE',
+    fontSize: 12,
+    fontWeight: '600',
   },
-  socialContainer: {
-    width: '100%',
-    marginBottom: 20,
-  },
-  loginContainer: {
+  socialButton: {
+    height: 56,
+    borderRadius: 4,
     flexDirection: 'row',
-    marginTop: 10,
-    marginBottom: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  googleButton: {
+    backgroundColor: BRAND.google,
+    borderWidth: 1,
+    borderColor: BRAND.line,
+  },
+  googleBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 4,
+    backgroundColor: BRAND.mist,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  loginText: {
-    fontSize: 14,
-    color: '#666',
+  googleBadgeText: {
+    color: BRAND.azure,
+    fontWeight: '800',
+    fontSize: 16,
   },
-  loginLink: {
+  googleButtonText: {
+    color: BRAND.ink,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  appleButton: {
+    backgroundColor: BRAND.apple,
+    marginTop: 12,
+  },
+  appleButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  footerText: {
+    color: '#5C7695',
     fontSize: 14,
-    color: '#4285F4',
-    fontWeight: '600',
+  },
+  footerLink: {
+    color: BRAND.azure,
+    fontWeight: '800',
+    fontSize: 14,
   },
 });
 

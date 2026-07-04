@@ -19,6 +19,7 @@ import databaseService from '../services/databaseService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { clerkAxios } from '../utils/clerkAxios';
 import syncService from '../services/syncService';
+import { useAuth } from '../context/AuthContext';
 
 const screenWidth = Dimensions.get('window').width;
 

@@ -12,8 +12,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
 import BASE_URL from '../context/Api';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Sharing from 'expo-sharing';
+import { getAuthToken } from '../utils/authToken';
 
 const InviteCaregiverScreen = ({ navigation }) => {
   const [email, setEmail] = useState('');
@@ -33,7 +33,7 @@ const InviteCaregiverScreen = ({ navigation }) => {
 
     setLoading(true);
     try {
-      const token = await AsyncStorage.getItem('authToken');
+      const token = await getAuthToken();
       
       const response = await axios.post(
         `${BASE_URL}/caregivers/invite`,
@@ -90,7 +90,11 @@ const InviteCaregiverScreen = ({ navigation }) => {
 
   return (
     <SafeAreaView className="flex-1 bg-white" edges={['top']}>
-      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+      <ScrollView
+        className="flex-1"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 16 }}
+      >
         {/* Header */}
         <View className="flex-row items-center px-5 pt-4 pb-3">
           <TouchableOpacity 
