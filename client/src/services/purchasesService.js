@@ -101,15 +101,33 @@ export const identifyPurchasesUser = async (appUserId) => {
   return customerInfo;
 };
 
+const isAnonymousRevenueCatUser = async () => {
+  try {
+    const customerInfo = await Purchases.getCustomerInfo();
+    const appUserId = customerInfo?.originalAppUserId || '';
+    return appUserId.startsWith('$RCAnonymousID:');
+  } catch {
+    return true;
+  }
+};
+
 export const logoutPurchasesUser = async () => {
   if (!configured) {
     return null;
   }
 
   try {
+    if (await isAnonymousRevenueCatUser()) {
+      return null;
+    }
+
     return await Purchases.logOut();
   } catch (error) {
-    console.log('RevenueCat logout skipped:', error?.message);
+    const message = error?.message || '';
+    if (message.toLowerCase().includes('anonymous')) {
+      return null;
+    }
+    console.log('RevenueCat logout skipped:', message);
     return null;
   }
 };

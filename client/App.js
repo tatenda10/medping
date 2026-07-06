@@ -1,7 +1,9 @@
 import React, { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
+import * as WebBrowser from 'expo-web-browser';
 import { ClerkProvider } from '@clerk/expo';
 import { tokenCache } from '@clerk/expo/token-cache';
+import { resourceCache } from '@clerk/expo/resource-cache';
 import AppNavigator from './src/navigation/AppNavigator';
 import notificationService from './src/services/notificationService';
 import databaseService from './src/services/databaseService';
@@ -11,6 +13,8 @@ import firebaseService from './src/services/firebaseService';
 import { AuthProvider } from './src/context/AuthContext';
 import { SubscriptionProvider } from './src/context/SubscriptionContext';
 import "./global.css"
+
+WebBrowser.maybeCompleteAuthSession();
 
 const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
@@ -59,7 +63,11 @@ export default function App() {
   }, []);
 
   return (
-    <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
+    <ClerkProvider
+      publishableKey={publishableKey}
+      tokenCache={tokenCache}
+      __experimental_resourceCache={resourceCache}
+    >
       <AuthProvider>
         <SubscriptionProvider>
           <AppNavigator />

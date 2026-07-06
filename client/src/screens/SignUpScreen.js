@@ -15,15 +15,21 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
-import { useSSO, useSignUp } from '@clerk/expo';
+import {
+  getClerkNetworkErrorMessage,
+  getClerkSSOIncompleteMessage,
+  getClerkSSORedirectUrl,
+  logClerkAuthError,
+  logClerkAuthFailureOutcome,
+  serializeClerkError,
+} from '../utils/completeClerkSSOFlow';
+import { useBrowserClerkSSO } from '../hooks/useBrowserClerkSSO';
+import { useSignUp } from '@clerk/expo';
 import { useAuth } from '../context/AuthContext';
 import onboardingService from '../services/onboardingService';
 import firebaseService from '../services/firebaseService';
 import { navigateAfterAuthentication } from '../navigation/postAuthNavigation';
-
-WebBrowser.maybeCompleteAuthSession();
 
 const BRAND = {
   ink: '#17324D',
@@ -47,7 +53,7 @@ const SignUpScreen = ({ onSignUpSuccess }) => {
   const navigation = useNavigation();
   const { isAuthenticated, userId, isLoaded: authLoaded } = useAuth();
   const { signUp, setActive, isLoaded } = useSignUp();
-  const { startSSOFlow } = useSSO();
+  const { startBrowserSSO, isReady: isSsoReady } = useBrowserClerkSSO();
   const handledAuthRef = useRef(false);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -97,14 +103,7 @@ const SignUpScreen = ({ onSignUpSuccess }) => {
     finalizeSignUp();
   }, [authLoaded, isAuthenticated, navigation, onSignUpSuccess, userId]);
 
-  const redirectUrl = useMemo(
-    () =>
-      AuthSession.makeRedirectUri({
-        scheme: 'mediping',
-        path: 'sso-callback',
-      }),
-    []
-  );
+  const redirectUrl = useMemo(() => getClerkSSORedirectUrl(), []);
 
   const handleEmailSignUp = async () => {
     if (!isLoaded || !signUp) return;
@@ -158,55 +157,45 @@ const SignUpScreen = ({ onSignUpSuccess }) => {
     }
   };
 
-  const completeSocialSession = async (result) => {
-    if (result?.createdSessionId && result?.setActive) {
-      await result.setActive({ session: result.createdSessionId });
-      return;
-    }
+  const handleBrowserSignUp = async (provider) => {
+    const strategy = provider === 'google' ? 'oauth_google' : 'oauth_apple';
 
-    if (result?.signUp?.status === 'missing_requirements') {
-      Alert.alert('More details required', 'This social account still needs additional fields in Clerk before the sign-up can finish.');
-      return;
-    }
-
-    Alert.alert('Sign up incomplete', 'The provider returned an incomplete sign-up. Check your Clerk configuration and try again.');
-  };
-
-  const handleGoogleSignUp = async () => {
-    setLoadingProvider('google');
+    setLoadingProvider(provider);
     try {
-      const result = await startSSOFlow({
-        strategy: 'oauth_google',
-        redirectUrl,
+      const outcome = await startBrowserSSO({
+        strategy,
       });
-      await completeSocialSession(result);
+
+      if (outcome.ok || outcome.reason === 'auth_cancelled') {
+        return;
+      }
+
+      const message = getClerkSSOIncompleteMessage(outcome);
+      if (message) {
+        logClerkAuthFailureOutcome(`SignUp ${provider} SSO`, outcome);
+        Alert.alert('Sign up incomplete', message);
+      }
     } catch (error) {
       if (error?.code !== 'ERR_REQUEST_CANCELED') {
-        Alert.alert('Google sign-up failed', getClerkErrorMessage(error, 'Check your Google and Clerk OAuth setup, then try again.'));
+        logClerkAuthError(`SignUp ${provider} sign-up failed`, serializeClerkError(error));
+        Alert.alert(
+          `${provider === 'google' ? 'Google' : 'Apple'} sign-up failed`,
+          getClerkNetworkErrorMessage(error) ||
+            getClerkErrorMessage(
+              error,
+              'Check OAuth and redirect URLs in the Clerk dashboard, then try again.'
+            )
+        );
       }
     } finally {
       setLoadingProvider(null);
     }
   };
 
-  const handleAppleSignUp = async () => {
-    setLoadingProvider('apple');
-    try {
-      const result = await startSSOFlow({
-        strategy: 'oauth_apple',
-        redirectUrl,
-      });
-      await completeSocialSession(result);
-    } catch (error) {
-      if (error?.code !== 'ERR_REQUEST_CANCELED') {
-        Alert.alert('Apple sign-up failed', getClerkErrorMessage(error, 'Check your Apple and Clerk configuration, then try again.'));
-      }
-    } finally {
-      setLoadingProvider(null);
-    }
-  };
+  const handleGoogleSignUp = () => handleBrowserSignUp('google');
+  const handleAppleSignUp = () => handleBrowserSignUp('apple');
 
-  const isBusy = loadingProvider !== null;
+  const isBusy = loadingProvider !== null || !isSsoReady;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>

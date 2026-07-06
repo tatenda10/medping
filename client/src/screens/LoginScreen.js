@@ -15,16 +15,22 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CommonActions, useNavigation } from '@react-navigation/native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
-import { useSignIn, useSSO } from '@clerk/expo';
+import {
+  getClerkNetworkErrorMessage,
+  getClerkSSOIncompleteMessage,
+  getClerkSSORedirectUrl,
+  logClerkAuthError,
+  logClerkAuthFailureOutcome,
+  serializeClerkError,
+} from '../utils/completeClerkSSOFlow';
+import { useBrowserClerkSSO } from '../hooks/useBrowserClerkSSO';
+import { useSignIn } from '@clerk/expo';
 import { useAuth } from '../context/AuthContext';
 import onboardingService from '../services/onboardingService';
 import firebaseService from '../services/firebaseService';
 import { navigationRef } from '../navigation/navigationRef';
 import { navigateAfterAuthentication } from '../navigation/postAuthNavigation';
-
-WebBrowser.maybeCompleteAuthSession();
 
 const BRAND = {
   ink: '#17324D',
@@ -48,7 +54,7 @@ const LoginScreen = ({ navigation: navProp, onLoginSuccess }) => {
   const navigation = navProp || useNavigation();
   const { isAuthenticated, userId, isLoaded: authLoaded } = useAuth();
   const { signIn, fetchStatus, errors } = useSignIn();
-  const { startSSOFlow } = useSSO();
+  const { startBrowserSSO, isReady: isSsoReady } = useBrowserClerkSSO();
   const handledAuthRef = useRef(false);
   const [emailAddress, setEmailAddress] = useState('');
   const [password, setPassword] = useState('');
@@ -102,14 +108,13 @@ const LoginScreen = ({ navigation: navProp, onLoginSuccess }) => {
     finalizeLogin();
   }, [authLoaded, isAuthenticated, navigation, onLoginSuccess, userId]);
 
-  const redirectUrl = useMemo(
-    () =>
-      AuthSession.makeRedirectUri({
-        scheme: 'mediping',
-        path: 'sso-callback',
-      }),
-    []
-  );
+  const redirectUrl = useMemo(() => getClerkSSORedirectUrl(), []);
+
+  useEffect(() => {
+    if (__DEV__) {
+      console.log('🔗 Clerk browser SSO redirect URL:', redirectUrl);
+    }
+  }, [redirectUrl]);
 
   const activeError = useMemo(() => {
     if (errors?.fields?.identifier?.message) return errors.fields.identifier.message;
@@ -302,62 +307,55 @@ const LoginScreen = ({ navigation: navProp, onLoginSuccess }) => {
     }
   };
 
-  const completeSocialSession = async (result) => {
-    if (result?.createdSessionId && result?.setActive) {
-      await result.setActive({ session: result.createdSessionId });
-      handledAuthRef.current = false;
+  const handleBrowserSignIn = async (provider) => {
+    const strategy = provider === 'google' ? 'oauth_google' : 'oauth_apple';
 
-      if (onLoginSuccess) {
-        await onLoginSuccess();
+    if (!isSsoReady) {
+      logClerkAuthError('Browser SSO tapped before Clerk was ready', { provider });
+    }
+
+    setLoadingProvider(provider);
+    try {
+      const outcome = await startBrowserSSO({
+        strategy,
+        onComplete: async () => {
+          handledAuthRef.current = false;
+          if (onLoginSuccess) {
+            await onLoginSuccess();
+          }
+        },
+      });
+
+      if (outcome.ok || outcome.reason === 'auth_cancelled') {
         return;
       }
 
-      return;
-    }
-
-    if (result?.signIn?.status === 'needs_second_factor') {
-      Alert.alert('Verification required', 'This account requires an additional sign-in factor after social login.');
-      return;
-    }
-
-    Alert.alert('Sign in incomplete', 'The provider returned an incomplete sign-in. Check your Clerk configuration and try again.');
-  };
-
-  const handleGoogleSignIn = async () => {
-    setLoadingProvider('google');
-    try {
-      const result = await startSSOFlow({
-        strategy: 'oauth_google',
-        redirectUrl,
-      });
-      await completeSocialSession(result);
+      const message = getClerkSSOIncompleteMessage(outcome);
+      if (message) {
+        logClerkAuthFailureOutcome(`Login ${provider} SSO`, outcome);
+        Alert.alert('Sign in incomplete', message);
+      }
     } catch (error) {
       if (error?.code !== 'ERR_REQUEST_CANCELED') {
-        Alert.alert('Google sign-in failed', getClerkErrorMessage(error, 'Check your Google and Clerk OAuth setup, then try again.'));
+        logClerkAuthError(`Login ${provider} sign-in failed`, serializeClerkError(error));
+        Alert.alert(
+          `${provider === 'google' ? 'Google' : 'Apple'} sign-in failed`,
+          getClerkNetworkErrorMessage(error) ||
+            getClerkErrorMessage(
+              error,
+              'Check OAuth and redirect URLs in the Clerk dashboard, then try again.'
+            )
+        );
       }
     } finally {
       setLoadingProvider(null);
     }
   };
 
-  const handleAppleSignIn = async () => {
-    setLoadingProvider('apple');
-    try {
-      const result = await startSSOFlow({
-        strategy: 'oauth_apple',
-        redirectUrl,
-      });
-      await completeSocialSession(result);
-    } catch (error) {
-      if (error?.code !== 'ERR_REQUEST_CANCELED') {
-        Alert.alert('Apple sign-in failed', getClerkErrorMessage(error, 'Check your Apple and Clerk configuration, then try again.'));
-      }
-    } finally {
-      setLoadingProvider(null);
-    }
-  };
+  const handleGoogleSignIn = () => handleBrowserSignIn('google');
+  const handleAppleSignIn = () => handleBrowserSignIn('apple');
 
-  const isBusy = fetchStatus === 'fetching' || loadingProvider !== null;
+  const isBusy = fetchStatus === 'fetching' || loadingProvider !== null || !isSsoReady;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>

@@ -1,3 +1,6 @@
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+
 const appJson = require('./app.json');
 
 const trim = (value) => (typeof value === 'string' ? value.trim() : '');

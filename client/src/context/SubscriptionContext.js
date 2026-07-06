@@ -13,7 +13,6 @@ import {
   identifyPurchasesUser,
   isPurchasesConfigured,
   isPurchasesSupported,
-  logoutPurchasesUser,
   purchasePackage,
   restorePurchases,
 } from '../services/purchasesService';
@@ -114,11 +113,9 @@ export const SubscriptionProvider = ({ children }) => {
           if (!cancelled) {
             setCustomerInfo(info);
           }
-        } else {
-          await logoutPurchasesUser();
-          if (!cancelled) {
-            setCustomerInfo(null);
-          }
+        } else if (!cancelled) {
+          // App logout calls Purchases.logOut explicitly — only clear local state here.
+          setCustomerInfo(null);
         }
 
         if (!cancelled) {

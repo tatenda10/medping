@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, Platform } from 'react-native';
+import { View, Text, Platform, ActivityIndicator } from 'react-native';
 import { NavigationContainer, CommonActions } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -264,6 +264,7 @@ const AppNavigator = () => {
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [navResetKey, setNavResetKey] = useState(0);
+  const isLoggingOutRef = useRef(false);
 
   useEffect(() => {
     registerPostAuthReadyHandler(() => {
@@ -277,12 +278,28 @@ const AppNavigator = () => {
   useEffect(() => {
     if (isLoaded) {
       checkAuthStatus();
+      return undefined;
     }
+
+    const timeoutId = setTimeout(() => {
+      console.warn('⚠️ Auth still loading — showing Splash as guest');
+      setNeedsOnboarding(true);
+      setIsLoading(false);
+    }, 4000);
+
+    return () => clearTimeout(timeoutId);
   }, [isLoaded, isAuthenticated, userId]);
 
   // Separate effect to handle navigation when auth state changes and user is authenticated
   useEffect(() => {
-    if (isLoaded && isAuthenticated && userId && !isLoading) {
+    if (
+      isLoaded &&
+      isAuthenticated &&
+      userId &&
+      !isLoading &&
+      !needsOnboarding &&
+      !isLoggingOutRef.current
+    ) {
       console.log('🚀 User authenticated, checking navigation...', 'needsOnboarding:', needsOnboarding);
       
       // Check if user has data - if so, they should go to MainApp regardless of onboarding flag
@@ -364,6 +381,10 @@ const AppNavigator = () => {
   const checkAuthStatus = async () => {
     try {
       console.log('🔍 checkAuthStatus called - isLoaded:', isLoaded, 'isAuthenticated:', isAuthenticated, 'userId:', userId);
+
+      if (isLoggingOutRef.current) {
+        return;
+      }
       
       if (!isLoaded) {
         console.log('⏳ Waiting for auth to load...');
@@ -523,11 +544,16 @@ const AppNavigator = () => {
   };
 
   const handleLogout = async () => {
+    if (isLoggingOutRef.current) {
+      return;
+    }
+
     console.log('🔴 AppNavigator handleLogout called');
+    isLoggingOutRef.current = true;
+
     try {
       syncService.stopAutoSync();
 
-      // Switch to onboarding stack immediately so auth state changes cannot keep MainApp mounted
       setNeedsOnboarding(true);
       setIsLoading(false);
       setNavResetKey((key) => key + 1);
@@ -546,26 +572,38 @@ const AppNavigator = () => {
       await clearAuth();
       console.log('✅ Auth cleared');
 
-      setTimeout(() => {
-        if (navigationRef.current?.isReady()) {
-          navigationRef.current.dispatch(
-            CommonActions.reset({
-              index: 0,
-              routes: [{ name: 'Splash' }],
-            })
-          );
-        }
-        syncService.startAutoSync();
-      }, 150);
+      if (navigationRef.current?.isReady()) {
+        navigationRef.current.dispatch(
+          CommonActions.reset({
+            index: 0,
+            routes: [{ name: 'Splash' }],
+          })
+        );
+      }
     } catch (error) {
       console.error('❌ Error logging out:', error);
       setNeedsOnboarding(true);
+      setIsLoading(false);
       setNavResetKey((key) => key + 1);
+    } finally {
+      isLoggingOutRef.current = false;
+      syncService.startAutoSync();
     }
   };
 
   if (isLoading) {
-    return null;
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: '#FFFFFF',
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}
+      >
+        <ActivityIndicator size="large" color="#0284C7" />
+      </View>
+    );
   }
 
   return (
